@@ -5,6 +5,7 @@ members = [
     "culpert-foundations",
     "culpert-cli",
     "examples/mock-axum",
+    "spike",
 ]
 
 [workspace.package]
