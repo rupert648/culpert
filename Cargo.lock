@@ -252,6 +252,12 @@ version = "0.0.1"
 [[package]]
 name = "culpert-foundations"
 version = "0.0.1"
+dependencies = [
+ "culpert",
+ "foundations",
+ "parking_lot",
+ "tokio",
+]
 
 [[package]]
 name = "darling"

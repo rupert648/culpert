@@ -3,6 +3,14 @@ name = "culpert-foundations"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "foundations adapter for culpert."
+description = "foundations adapter for culpert: maps TelemetryContext spans into culpert's SpanContext and provides a TelemetryServerRoute for serving pprof profiles."
 
 [dependencies]
+culpert = { workspace = true }
+foundations = { workspace = true }
+parking_lot = { workspace = true }
+
+[dev-dependencies]
+# `testing` for TelemetryContext::test() in integration tests.
+foundations = { workspace = true, features = ["testing"] }
+tokio = { workspace = true }
