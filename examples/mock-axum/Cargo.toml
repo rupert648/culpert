@@ -4,6 +4,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "Synthetic foundations-instrumented service used to dogfood culpert."
+description = "Synthetic foundations-instrumented axum service used to dogfood culpert."
 
 [dependencies]
+culpert = { workspace = true }
+culpert-foundations = { workspace = true }
+foundations = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

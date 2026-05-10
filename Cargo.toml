@@ -31,4 +31,9 @@ prost = "0.14"
 # `telemetry-server` gives us TelemetryServerRoute for the pprof endpoint.
 foundations = { version = "5", default-features = false, features = ["tracing", "telemetry-server"] }
 
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "signal"] }
+
+# mock-axum example deps
+axum = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
