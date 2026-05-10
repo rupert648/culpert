@@ -97,15 +97,29 @@ async fn main() {
     eprintln!("telemetry endpoints on   {telemetry_addr:?}");
     eprintln!("  pprof: http://127.0.0.1:{TELEMETRY_PORT}/debug/alloc/profile");
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .expect("axum serve");
-}
-
-async fn shutdown_signal() {
-    let _ = tokio::signal::ctrl_c().await;
-    eprintln!("shutting down");
+    // Race the axum server against ctrl-c. Two things make graceful shutdown
+    // unfit for a demo binary:
+    //
+    // 1. axum::serve(...).with_graceful_shutdown(...) waits for *all* in-flight
+    //    HTTP connections to close politely. The load.sh client uses HTTP/1.1
+    //    keep-alive, so its sockets stay open long after the load is done —
+    //    axum hangs waiting for them.
+    // 2. The foundations telemetry driver is in a `tokio::spawn`'d background
+    //    task; when main's body completes, the runtime would still wait on it
+    //    indefinitely.
+    //
+    // For a demo, the right thing is to terminate immediately on ctrl-c.
+    // A real production wiring would coordinate driver shutdown via
+    // `driver.with_graceful_shutdown(signal)` and return cleanly.
+    tokio::select! {
+        res = axum::serve(listener, app) => {
+            res.expect("axum serve");
+        }
+        _ = tokio::signal::ctrl_c() => {
+            eprintln!("shutting down");
+            std::process::exit(0);
+        }
+    }
 }
 
 // --- routes -------------------------------------------------------------
