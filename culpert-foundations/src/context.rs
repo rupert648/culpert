@@ -1,15 +1,21 @@
 //! [`FoundationsSpanContext`] — `culpert::SpanContext` impl that reads from
 //! `foundations::telemetry::tracing`.
 //!
-//! Identity strategy (per `notes.md` Q2): culpert mints its own monotonic
-//! `u64` SpanIds, keyed by the `Arc<RwLock<Span>>` pointer of foundations'
-//! current span. The cache is filled lazily on first sight.
+//! Identity strategy: use cf-rustracing's own `span_id` (a `u64` minted by
+//! the tracer at span creation time). It is stable for the span's lifetime
+//! and unique within a trace, which is what culpert needs.
+//!
+//! An earlier draft used `Arc<RwLock<Span>>::as_ptr` as the identity. That
+//! is **wrong** for long-running services: when a span ends its Arc drops,
+//! the heap slot is reused, and a later unrelated span's Arc may land at
+//! the same address. Mock-axum surfaced this immediately — every request
+//! after the first returned the same SpanId from cache. cf-rustracing's
+//! span_id has none of that risk.
 //!
 //! Sampling regime: only attributes when `span_is_sampled()` is true.
-//! Inactive / unsampled spans return `None`. This is because
-//! `rustracing_span()` allocates a fresh `Arc` on every call for inactive
-//! spans, so the `Arc::as_ptr` cache key would be useless. The gate is
-//! cheap (single thread-local read).
+//! Inactive / unsampled spans return `None`. This is because cf-rustracing
+//! only attaches a span context (and therefore a span_id) to sampled
+//! spans. The gate is cheap (single thread-local read).
 
 use culpert::{SpanContext, SpanId, SpanMetadata};
 use foundations::reexports_for_macros::cf_rustracing::span::InspectableSpan;
@@ -17,23 +23,15 @@ use foundations::telemetry::tracing::{rustracing_span, span_is_sampled};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::num::NonZeroU64;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-/// Cache keyed by `Arc<RwLock<Span>>` raw pointer (stable for the Arc's
-/// lifetime in the Tracked / Untracked variants — see notes.md Q2).
-struct State {
-    by_arc: HashMap<usize, SpanId>,
-    by_id: HashMap<SpanId, SpanMetadata>,
-}
 
 /// `culpert::SpanContext` implementation backed by foundations' tracing.
 ///
 /// Construct with [`FoundationsSpanContext::new`] and pass to
 /// [`culpert::install`], or use the [`crate::install`] convenience.
 pub struct FoundationsSpanContext {
-    state: RwLock<State>,
-    next_id: AtomicU64,
+    /// Span metadata keyed by cf-rustracing's `span_id`. Filled lazily on
+    /// first sight of a span; cleared when the user calls [`Self::clear_metadata`].
+    by_id: RwLock<HashMap<SpanId, SpanMetadata>>,
 }
 
 impl Default for FoundationsSpanContext {
@@ -45,69 +43,54 @@ impl Default for FoundationsSpanContext {
 impl FoundationsSpanContext {
     pub fn new() -> Self {
         Self {
-            state: RwLock::new(State {
-                by_arc: HashMap::new(),
-                by_id: HashMap::new(),
-            }),
-            // SpanIds start at 1 (NonZeroU64).
-            next_id: AtomicU64::new(1),
+            by_id: RwLock::new(HashMap::new()),
         }
     }
 
-    fn mint_id(&self) -> SpanId {
-        let n = self.next_id.fetch_add(1, Ordering::Relaxed);
-        // Safe: we initialise next_id at 1 and only increment.
-        NonZeroU64::new(n).expect("next_id starts at 1, never zero")
+    /// Drop the span-metadata cache. The cache grows monotonically over the
+    /// process lifetime as new spans are observed; long-running services
+    /// can call this periodically (e.g. after a snapshot) to bound memory.
+    /// v0.1 does not do this automatically.
+    pub fn clear_metadata(&self) {
+        self.by_id.write().clear();
     }
 }
 
 impl SpanContext for FoundationsSpanContext {
     fn current_span(&self) -> Option<SpanId> {
-        // Cheap thread-local read; bails on the no-span and inactive cases
-        // before we touch the per-Span lock or the cache write path.
+        // Cheap thread-local read; bails on the no-span and inactive cases.
         if !span_is_sampled() {
             return None;
         }
 
-        // For sampled spans this returns the canonical Arc<RwLock<Span>>
-        // (Tracked/Untracked variant) — Arc::as_ptr is stable for lifetime.
+        // Sampled spans have a non-empty SpanContext from cf-rustracing.
         let arc = rustracing_span()?;
-        let key = Arc::as_ptr(&arc) as usize;
+        let span = arc.read();
+        let span_id_u64 = span.context()?.state().span_id();
+        let span_id = NonZeroU64::new(span_id_u64)?;
 
-        // Hot path: read-locked lookup.
-        if let Some(&id) = self.state.read().by_arc.get(&key) {
-            return Some(id);
+        // Fast path: metadata already snapshot.
+        if self.by_id.read().contains_key(&span_id) {
+            return Some(span_id);
         }
 
-        // Cache miss: snapshot metadata and insert under a write lock. We
-        // re-check under the write lock in case another thread inserted.
-        let id = self.mint_id();
-        let name = {
-            let span = arc.read();
-            span.operation_name().to_string()
-        };
+        // Slow path (first sight on this span): snapshot the name.
+        let name = span.operation_name().to_string();
+        drop(span);
 
-        let mut state = self.state.write();
-        if let Some(&existing) = state.by_arc.get(&key) {
-            return Some(existing);
-        }
-        state.by_arc.insert(key, id);
-        // Parent: cf-rustracing exposes references but mapping them to a
-        // culpert SpanId requires walking an upstream Arc chain that isn't
-        // surfaced through the public API. v0.1 leaves parent: None;
-        // hierarchy is recoverable from the call stack frames in the
-        // pprof output, which is the richer view anyway.
-        state.by_id.insert(
-            id,
-            SpanMetadata {
-                name,
-                parent: None,
-            },
-        );
-        Some(id)
+        let mut by_id = self.by_id.write();
+        by_id.entry(span_id).or_insert_with(|| SpanMetadata {
+            name,
+            // Parent: cf-rustracing's references list is not surfaced
+            // through foundations' public API in a way that maps cleanly
+            // to a culpert SpanId. v0.1 leaves parent: None; hierarchy is
+            // recoverable from the call stack frames in the pprof output.
+            parent: None,
+        });
+        Some(span_id)
     }
 
     fn metadata(&self, span: SpanId) -> Option<SpanMetadata> {
-        self.state.read().by_id.get(&span).cloned()
+        self.by_id.read().get(&span).cloned()
     }
 }
