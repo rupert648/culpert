@@ -1,0 +1,111 @@
+//! Hot-path observer: invoked by [`TrackingAllocator::alloc`](crate::TrackingAllocator)
+//! on every successful allocation. Decides sampling, captures stack, pushes
+//! a [`RawSample`] into the per-thread buffer.
+//!
+//! Re-entrancy: the per-thread `IN_TRACKER` cell short-circuits any
+//! allocation triggered by our own bookkeeping (e.g. foundations' lazy
+//! thread-local cell init, the `Vec` growth in our sample buffer, etc.).
+//! See `notes.md` Q1 for why this is necessary.
+
+use crate::sample::RawSample;
+use crate::{global, thread_state};
+use smallvec::SmallVec;
+use std::cell::Cell;
+
+thread_local! {
+    /// Per-thread reentrancy guard. `const`-initialised so first access on a
+    /// thread does not heap-allocate.
+    static IN_TRACKER: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Entry point from [`TrackingAllocator::alloc`](crate::TrackingAllocator).
+///
+/// Returns immediately without doing anything if:
+/// - no profiler is installed, or
+/// - we're already inside an `observe` call on this thread (recursion), or
+/// - the snapshot path on this thread has explicitly raised the guard.
+#[inline]
+pub(crate) fn observe(bytes: u64) {
+    let already = IN_TRACKER.with(|c| c.replace(true));
+    if already {
+        return;
+    }
+    // SAFETY net: clear guard even if do_observe panics.
+    let _reset = ReentryReset { prior: false };
+    do_observe(bytes);
+}
+
+/// RAII guard that raises the per-thread reentrancy flag for the duration of
+/// a critical section, restoring its previous value on drop.
+///
+/// Used by the snapshot path to prevent allocations performed during the
+/// snapshot itself (Vec growth, backtrace::resolve, etc.) from re-entering
+/// `observe` and deadlocking on per-thread locks the snapshot is already
+/// holding.
+pub(crate) fn enter_reentry_zone() -> ReentryReset {
+    let prior = IN_TRACKER.with(|c| c.replace(true));
+    ReentryReset { prior }
+}
+
+pub(crate) struct ReentryReset {
+    prior: bool,
+}
+
+impl Drop for ReentryReset {
+    fn drop(&mut self) {
+        let prior = self.prior;
+        IN_TRACKER.with(|c| c.set(prior));
+    }
+}
+
+fn do_observe(bytes: u64) {
+    // Cheap path when no profiler installed: just return.
+    let Some(profiler) = global::profiler() else {
+        return;
+    };
+
+    let handle = thread_state::handle(&profiler.config);
+
+    // Lock briefly: update countdown, decide whether to sample, drop lock.
+    // We do NOT want to hold the per-thread mutex across `backtrace::trace`.
+    let should_sample = {
+        let mut st = handle.lock();
+        st.bytes_until_next_sample = st.bytes_until_next_sample.saturating_sub(bytes as i64);
+        if st.bytes_until_next_sample > 0 {
+            false
+        } else {
+            // Rearm the countdown. We *add* rather than replace so a single huge
+            // alloc that overshoots by N rate intervals still only produces one
+            // sample. Acceptable bias at extreme alloc sizes for v0.1.
+            st.bytes_until_next_sample = st
+                .bytes_until_next_sample
+                .saturating_add(profiler.config.rate_bytes as i64);
+            true
+        }
+    };
+
+    if !should_sample {
+        return;
+    }
+
+    let span = profiler.ctx.current_span();
+    let frames = capture_stack(profiler.config.stack_depth);
+
+    handle.lock().try_push(RawSample {
+        span,
+        bytes,
+        frames,
+    });
+}
+
+fn capture_stack(depth: usize) -> SmallVec<[usize; 32]> {
+    let mut out: SmallVec<[usize; 32]> = SmallVec::new();
+    backtrace::trace(|frame| {
+        if out.len() >= depth {
+            return false;
+        }
+        out.push(frame.ip() as usize);
+        true
+    });
+    out
+}

@@ -18,6 +18,11 @@ license = "MIT OR Apache-2.0"
 culpert = { path = "culpert", version = "0.0.1" }
 culpert-foundations = { path = "culpert-foundations", version = "0.0.1" }
 
+# culpert core deps
+backtrace = "0.3"
+parking_lot = "0.12"
+smallvec = "1"
+
 # foundations: pin lean feature set; full `telemetry` pulls jemalloc/sentry/etc.
 # `tracing` gives us TelemetryContext, span_fn, WithTelemetryContext.
 # `telemetry-server` gives us TelemetryServerRoute for the pprof endpoint.

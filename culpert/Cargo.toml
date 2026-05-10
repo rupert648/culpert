@@ -6,3 +6,6 @@ license.workspace = true
 description = "Per-span heap allocation profiler core for Rust services."
 
 [dependencies]
+backtrace = { workspace = true }
+parking_lot = { workspace = true }
+smallvec = { workspace = true }
