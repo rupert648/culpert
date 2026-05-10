@@ -110,19 +110,28 @@ thread_local! {
 }
 
 /// Get this thread's state handle, lazily initialising on first use.
-pub(crate) fn handle(config: &Config) -> Arc<Mutex<ThreadState>> {
-    THREAD_HANDLE.with(|cell| {
-        Arc::clone(
-            &cell
-                .get_or_init(|| {
-                    crate::debug::dbglog!("registering new thread state");
-                    let arc = Arc::new(Mutex::new(ThreadState::new(config)));
-                    REGISTRY.lock().push(Arc::downgrade(&arc));
-                    ThreadHandle { inner: arc }
-                })
-                .inner,
-        )
-    })
+///
+/// Returns `None` when the thread-local is mid-destruction (i.e. the calling
+/// thread is shutting down). This happens in practice when other crates'
+/// TLS destructors (foundations' `thread_local` crate is the canonical
+/// case) allocate during *their* drop, and our allocator catches the
+/// allocation after our own `THREAD_HANDLE` has already been destroyed.
+/// In that case we cannot record the sample anywhere; bail silently.
+pub(crate) fn handle(config: &Config) -> Option<Arc<Mutex<ThreadState>>> {
+    THREAD_HANDLE
+        .try_with(|cell| {
+            Arc::clone(
+                &cell
+                    .get_or_init(|| {
+                        crate::debug::dbglog!("registering new thread state");
+                        let arc = Arc::new(Mutex::new(ThreadState::new(config)));
+                        REGISTRY.lock().push(Arc::downgrade(&arc));
+                        ThreadHandle { inner: arc }
+                    })
+                    .inner,
+            )
+        })
+        .ok()
 }
 
 /// Drain every live thread's samples + the deceased queue into `out`. Returns

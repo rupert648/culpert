@@ -23,10 +23,13 @@ thread_local! {
 /// Returns immediately without doing anything if:
 /// - no profiler is installed, or
 /// - we're already inside an `observe` call on this thread (recursion), or
-/// - the snapshot path on this thread has explicitly raised the guard.
+/// - the snapshot path on this thread has explicitly raised the guard, or
+/// - the calling thread's `IN_TRACKER` is mid-destruction (TLS shutdown).
 #[inline]
 pub(crate) fn observe(bytes: u64) {
-    let already = IN_TRACKER.with(|c| c.replace(true));
+    // try_with: if IN_TRACKER is mid-destruction (only happens during
+    // thread teardown), treat as "already in tracker" and bail.
+    let already = IN_TRACKER.try_with(|c| c.replace(true)).unwrap_or(true);
     if already {
         return;
     }
@@ -43,7 +46,8 @@ pub(crate) fn observe(bytes: u64) {
 /// `observe` and deadlocking on per-thread locks the snapshot is already
 /// holding.
 pub(crate) fn enter_reentry_zone() -> ReentryReset {
-    let prior = IN_TRACKER.with(|c| c.replace(true));
+    // try_with: same TLS-shutdown caveat as `observe`.
+    let prior = IN_TRACKER.try_with(|c| c.replace(true)).unwrap_or(true);
     ReentryReset { prior }
 }
 
@@ -54,7 +58,8 @@ pub(crate) struct ReentryReset {
 impl Drop for ReentryReset {
     fn drop(&mut self) {
         let prior = self.prior;
-        IN_TRACKER.with(|c| c.set(prior));
+        // try_with: silently ignore TLS-shutdown failure on drop.
+        let _ = IN_TRACKER.try_with(|c| c.set(prior));
     }
 }
 
@@ -64,7 +69,10 @@ fn do_observe(bytes: u64) {
         return;
     };
 
-    let handle = thread_state::handle(&profiler.config);
+    // None means our TLS is mid-destruction; nothing to do.
+    let Some(handle) = thread_state::handle(&profiler.config) else {
+        return;
+    };
 
     // Lock briefly: update countdown, decide whether to sample, drop lock.
     // We do NOT want to hold the per-thread mutex across `backtrace::trace`.
