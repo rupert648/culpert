@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+    "culpert",
+    "culpert-foundations",
+    "culpert-cli",
+    "examples/mock-axum",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+# Internal crates
+culpert = { path = "culpert", version = "0.0.1" }
+culpert-foundations = { path = "culpert-foundations", version = "0.0.1" }
+
+# foundations: pin lean feature set; full `telemetry` pulls jemalloc/sentry/etc.
+# `tracing` gives us TelemetryContext, span_fn, WithTelemetryContext.
+# `telemetry-server` gives us TelemetryServerRoute for the pprof endpoint.
+foundations = { version = "5", default-features = false, features = ["tracing", "telemetry-server"] }
+
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }

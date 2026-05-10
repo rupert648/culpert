@@ -1,0 +1,12 @@
+[package]
+name = "culpert-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CLI for analyzing culpert profiles (`culpert report`, `culpert diff`)."
+
+[[bin]]
+name = "culpert"
+path = "src/main.rs"
+
+[dependencies]

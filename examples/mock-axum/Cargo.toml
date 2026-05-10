@@ -1,0 +1,9 @@
+[package]
+name = "mock-axum"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Synthetic foundations-instrumented service used to dogfood culpert."
+
+[dependencies]
