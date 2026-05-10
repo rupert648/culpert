@@ -40,7 +40,10 @@ use std::collections::HashMap;
 /// than running `prost-build` from a `build.rs`, so culpert's build does not
 /// need `protoc` on the user's machine. Tag numbers and field types are
 /// taken from <https://github.com/google/pprof/blob/main/proto/profile.proto>.
-mod proto {
+///
+/// These types are exposed publicly so external tools (notably `culpert-cli`)
+/// can decode profiles without having to vendor their own copy of the proto.
+pub mod proto {
     #[derive(Clone, PartialEq, prost::Message)]
     pub struct Profile {
         #[prost(message, repeated, tag = "1")]
@@ -213,6 +216,50 @@ pub fn encode_gzipped(profile: &Profile) -> std::io::Result<Vec<u8>> {
     let mut gz = GzEncoder::new(Vec::with_capacity(bytes.len() / 4), Compression::default());
     gz.write_all(&bytes)?;
     gz.finish()
+}
+
+/// Errors that can arise from [`decode_gzipped`].
+#[derive(Debug)]
+pub enum DecodeError {
+    /// Gzip decompression failed.
+    Gzip(std::io::Error),
+    /// Protobuf decode failed.
+    Proto(prost::DecodeError),
+}
+
+impl std::fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DecodeError::Gzip(e) => write!(f, "gzip decompression failed: {e}"),
+            DecodeError::Proto(e) => write!(f, "protobuf decode failed: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for DecodeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            DecodeError::Gzip(e) => Some(e),
+            DecodeError::Proto(e) => Some(e),
+        }
+    }
+}
+
+/// Decode gzip-compressed pprof bytes into a [`proto::Profile`].
+///
+/// Companion to [`encode_gzipped`]. Used by `culpert-cli` to read profiles
+/// off disk for reporting; exposed publicly so third-party Rust code can
+/// also analyse culpert profiles programmatically.
+pub fn decode_gzipped(bytes: &[u8]) -> Result<proto::Profile, DecodeError> {
+    use flate2::read::GzDecoder;
+    use std::io::Read;
+
+    let mut decoder = GzDecoder::new(bytes);
+    let mut decompressed = Vec::with_capacity(bytes.len() * 4);
+    decoder
+        .read_to_end(&mut decompressed)
+        .map_err(DecodeError::Gzip)?;
+    proto::Profile::decode(&decompressed[..]).map_err(DecodeError::Proto)
 }
 
 fn build_proto(profile: &Profile) -> proto::Profile {

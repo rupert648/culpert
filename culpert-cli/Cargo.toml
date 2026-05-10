@@ -10,3 +10,5 @@ name = "culpert"
 path = "src/main.rs"
 
 [dependencies]
+culpert = { workspace = true }
+clap = { workspace = true }
