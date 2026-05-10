@@ -43,12 +43,21 @@
 //! - [`span`] — `SpanId`, `SpanMetadata`, [`SpanContext`] trait
 //! - [`config`] — [`Config`] knobs
 //! - [`mock`] — [`MockSpanContext`] for tests
+//! - [`pprof`] — pprof protobuf encoder + decoder. Exposed publicly so
+//!   downstream tooling (`culpert-cli`, third-party analysis code) can read
+//!   profiles without vendoring its own copy of the schema.
 //! - The other modules are crate-internal:
 //!   - `allocator` — [`TrackingAllocator`]
 //!   - `sampler` — hot-path observer + reentrancy guard
 //!   - `thread_state` — per-thread buffer + global registry
 //!   - `aggregator` — snapshot + symbol resolution
 //!   - `global` — [`install`] / [`snapshot`] entry points
+//!
+//! # Debugging
+//!
+//! Set `CULPERT_DEBUG=1` in the environment to enable internal trace logs
+//! (sampler/snapshot lifecycle to stderr). Off by default; the hot-path
+//! check is one relaxed atomic load.
 
 pub mod config;
 pub mod mock;

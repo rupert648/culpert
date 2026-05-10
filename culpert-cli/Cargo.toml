@@ -8,6 +8,10 @@ description = "CLI for analyzing culpert profiles (`culpert report`, `culpert di
 [[bin]]
 name = "culpert"
 path = "src/main.rs"
+# Don't generate rustdoc for the binary — it shares its name with the
+# `culpert` library and would collide on `target/doc/culpert/index.html`.
+# Binary-only CLI; nothing to document for downstream users.
+doc = false
 
 [dependencies]
 culpert = { workspace = true }

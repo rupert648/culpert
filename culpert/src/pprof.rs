@@ -1,6 +1,6 @@
 //! pprof protobuf export.
 //!
-//! Encodes a culpert [`Profile`](crate::Profile) into a pprof-format protobuf
+//! Encodes a culpert [`Profile`] into a pprof-format protobuf
 //! message (`perftools.profiles.Profile`). Two emit functions:
 //!
 //! - [`encode`] — raw protobuf bytes (no compression). Suitable for
