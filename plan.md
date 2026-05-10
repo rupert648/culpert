@@ -35,19 +35,22 @@ static GLOBAL: culpert::TrackingAllocator<tikv_jemallocator::Jemalloc> =
     culpert::TrackingAllocator::new(tikv_jemallocator::Jemalloc);
 
 fn main() {
-    foundations::telemetry::init(...).unwrap();
+    // Routes are registered at init time via TelemetryConfig::custom_server_routes.
+    // (foundations 5.x has no runtime add_route API — verified in Phase 0,
+    // see notes.md Q5.)
+    let driver = foundations::telemetry::init(TelemetryConfig {
+        service_info: &service_info!(),
+        settings: &settings.telemetry,
+        custom_server_routes: vec![
+            culpert_foundations::pprof_route("/debug/alloc/profile"),
+        ],
+    }).unwrap();
 
-    // Hook foundations TelemetryContext lifecycle
+    // Hook foundations TelemetryContext lifecycle into culpert.
     culpert_foundations::install();
 
-    // Register pprof endpoint on foundations' telemetry-server
-    foundations::telemetry::add_route(TelemetryServerRoute {
-        path: "/debug/alloc/profile".into(),
-        methods: vec![Method::GET],
-        handler: culpert::pprof_handler(),
-    });
-
-    // ... rest of app, with existing #[span_fn] instrumentation
+    // ... rest of app, with existing #[span_fn] instrumentation, then
+    //     drive `driver` on the runtime.
 }
 ```
 
@@ -221,10 +224,15 @@ profiling is statistically sound and what every other heap profiler does
 
 ## Phased build plan (~4 weeks elapsed, on-and-off)
 
-### Phase 0 — research spike (3-4 days)
+### Phase 0 — research spike (3-4 days) — **shipped**
 
 The single goal: **answer the 5 load-bearing technical questions** before
 committing to v0.1 implementation. Throwaway code, just feasibility.
+
+Verdicts and code refs in `notes.md`. All five resolve PASS. Two corrections
+folded back into this plan: the `add_route` example was wrong (foundations
+5.x has no runtime API for that — see § "What 'adding it to a service' looks
+like"), and Phase 1 must include a per-thread reentrancy guard.
 
 1. **Allocator reentrancy with foundations.** Does
    `TelemetryContext::current()` allocate? If yes, can we read a thread-local
@@ -243,16 +251,31 @@ committing to v0.1 implementation. Throwaway code, just feasibility.
 with a code reference and a "yes/no/workaround" verdict. Stop and re-plan
 before Phase 1 if any answer is "no" without a clear workaround.
 
-### Phase 1 — core allocator + sampled accumulation (~5 days)
+### Phase 1 — core allocator + sampled accumulation (~5 days) — **shipped**
 
 - `TrackingAllocator<A: GlobalAlloc>` skeleton.
-- Thread-local accumulator: `(span_id, callsite_addr) → bytes`.
+- Per-thread sample buffer (`Vec<RawSample>`, capped at `Config::buffer_capacity`).
+  Bucketing by `(span_id, frames_hash)` happens in the snapshot path, not the
+  hot path — cheaper observe(), bounded memory by buffer cap. (Drift from
+  the original `(span_id, callsite_addr) → bytes` map design; chosen for
+  hot-path simplicity. Trade-off documented in `culpert/src/thread_state.rs`.)
 - Sampling: every Nth byte allocated triggers a sample with stack capture.
 - `SpanContext` trait: pluggable source of "what's the current span ID?"
 - `MockSpanContext` for testing (deterministic span IDs from a vec).
-- Aggregator: lock-free flush from thread-locals to a global hash map.
-- Unit tests: synthetic workload with N threads, M spans, verify attribution
-  is correct within statistical bounds.
+- Aggregator: hot path takes only the per-thread `Mutex` (uncontended in
+  steady state) — effectively lock-free against any global state. Snapshot
+  path takes brief locks across threads. Pure lock-free is a v0.2 polish
+  if benchmarks demand it.
+- **Deceased-thread salvage queue:** on thread exit, each thread's leftover
+  samples are moved into a global queue that the next snapshot also drains.
+  Without this, short-lived workers lose all their attribution at thread exit.
+  (Discovered immediately by `tests/smoke.rs`; not in the original plan.)
+- **`CULPERT_DEBUG=1` env-gated debug logging.** ~1 atomic load on the hot
+  path when off; eprintln! traces of sampler/snapshot lifecycle when on.
+  (Saved a deadlock debug session; not in the original plan.)
+- End-to-end test (`tests/smoke.rs::end_to_end_attribution`): synthetic
+  workload exercises single-thread, multi-thread (with thread-exit salvage),
+  nested span hierarchy with parent metadata, and snapshot drain idempotency.
 
 ### Phase 2 — pprof export (~2 days)
 
