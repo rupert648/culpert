@@ -22,6 +22,9 @@ culpert-foundations = { path = "culpert-foundations", version = "0.0.1" }
 backtrace = "0.3"
 parking_lot = "0.12"
 smallvec = "1"
+# pprof export (Phase 2)
+flate2 = "1"
+prost = "0.14"
 
 # foundations: pin lean feature set; full `telemetry` pulls jemalloc/sentry/etc.
 # `tracing` gives us TelemetryContext, span_fn, WithTelemetryContext.

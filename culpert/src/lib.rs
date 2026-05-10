@@ -52,6 +52,7 @@
 
 pub mod config;
 pub mod mock;
+pub mod pprof;
 pub mod span;
 
 mod aggregator;
