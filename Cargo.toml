@@ -12,6 +12,7 @@ members = [
 version = "0.0.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/rupert648/culpert"
 
 [workspace.dependencies]
 # Internal crates

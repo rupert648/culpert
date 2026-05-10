@@ -3,6 +3,7 @@ name = "culpert"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Per-span heap allocation profiler core for Rust services."
 
 [dependencies]

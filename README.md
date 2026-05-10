@@ -8,8 +8,9 @@ inside, exports pprof-format profiles, and ships a CLI for human-readable
 reports.
 
 **Status:** pre-release. v0.1 in flight; not yet on crates.io. See
-[`plan.md`](plan.md) for the design and [`notes.md`](notes.md) for the
-Phase 0 research verdicts.
+[`plan.md`](plan.md) for the design, [`notes.md`](notes.md) for the
+Phase 0 research verdicts, and [`CHANGELOG.md`](CHANGELOG.md) for what's
+landed so far.
 
 ## Quickstart
 
