@@ -97,7 +97,7 @@ fn run_top_spans(path: &PathBuf, top: usize) -> Result<(), Box<dyn std::error::E
     let rate_bytes = profile.period.max(1) as u64;
     let mut rows = aggregate_by_span(&profile, rate_bytes);
 
-    rows.sort_by(|a, b| b.estimated_bytes.cmp(&a.estimated_bytes));
+    rows.sort_by_key(|r| std::cmp::Reverse(r.estimated_bytes));
 
     let total_bytes: u64 = rows.iter().map(|r| r.bytes_total).sum();
     let total_estimated: u64 = rows.iter().map(|r| r.estimated_bytes).sum();
@@ -135,7 +135,7 @@ fn aggregate_by_span(profile: &proto::Profile, rate_bytes: u64) -> Vec<SpanRow> 
         // Bias-corrected estimate per sample bucket.
         // avg = bytes / count is the mean Layout::size() in this bucket.
         // Each underlying alloc contributes max(avg, rate) to the unbiased total.
-        let avg = if count == 0 { 0 } else { bytes / count };
+        let avg = bytes.checked_div(count).unwrap_or(0);
         let estimated = if avg < rate_bytes {
             count.saturating_mul(rate_bytes)
         } else {
@@ -210,7 +210,7 @@ fn run_callsites(
     let rate_bytes = profile.period.max(1) as u64;
     let mut rows = aggregate_callsites(&profile, &filter, rate_bytes);
 
-    rows.sort_by(|a, b| b.estimated_bytes.cmp(&a.estimated_bytes));
+    rows.sort_by_key(|r| std::cmp::Reverse(r.estimated_bytes));
 
     let total_bytes: u64 = rows.iter().map(|r| r.bytes_total).sum();
     let total_estimated: u64 = rows.iter().map(|r| r.estimated_bytes).sum();
@@ -292,7 +292,7 @@ fn aggregate_callsites(
 
         let count = sample.value.first().copied().unwrap_or(0).max(0) as u64;
         let bytes = sample.value.get(1).copied().unwrap_or(0).max(0) as u64;
-        let avg = if count == 0 { 0 } else { bytes / count };
+        let avg = bytes.checked_div(count).unwrap_or(0);
         let estimated = if avg < rate_bytes {
             count.saturating_mul(rate_bytes)
         } else {
@@ -403,8 +403,7 @@ fn print_callsite_table(rows: &[CallsiteRow], total_bytes: u64, total_estimated:
         .map(|r| r.label.len())
         .max()
         .unwrap_or(20)
-        .min(80)
-        .max(20);
+        .clamp(20, 80);
 
     println!(
         "  {:<label_w$}  {:>10}  {:>14}  {:>7}  {:>14}  {:>7}",

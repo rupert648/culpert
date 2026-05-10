@@ -158,8 +158,8 @@ async fn vec_route() -> String {
 async fn nested_route() -> String {
     let parsed = parse_payload();
     let validated = validate_payload(&parsed);
-    let response = build_response(validated);
-    response
+    
+    build_response(validated)
 }
 
 #[span_fn("parse_payload")]

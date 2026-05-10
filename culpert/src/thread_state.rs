@@ -155,7 +155,7 @@ pub(crate) fn drain_all(out: &mut Vec<RawSample>) -> u64 {
             alive_count += 1;
             let mut st = arc.lock();
             let n = st.samples.len();
-            out.extend(st.samples.drain(..));
+            out.append(&mut st.samples);
             dropped_total = dropped_total.saturating_add(st.dropped_samples);
             st.dropped_samples = 0;
             crate::debug::dbglog!("drain_all: drained {} samples from a live thread", n);

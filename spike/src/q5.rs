@@ -83,7 +83,7 @@ pub async fn run() {
     driver.with_graceful_shutdown(async move {
         let _ = shutdown_rx.await;
     });
-    let driver_task = tokio::spawn(async move { driver.await });
+    let driver_task = tokio::spawn(driver);
 
     // Tiny moment for the listener to start accepting.
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
