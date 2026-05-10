@@ -26,6 +26,18 @@ for diffing two profiles.
 [dependencies]
 culpert              = "0.1"
 culpert-foundations  = "0.1"
+
+# Foundations must be brought in with `default-features = false`. Default
+# features turn on `jemalloc`, which makes foundations declare its own
+# `#[global_allocator] static GLOBAL: Jemalloc`. That conflicts with
+# culpert's `#[global_allocator] static GLOBAL: TrackingAllocator<...>` and
+# fails to link.
+foundations = { version = "5", default-features = false, features = ["tracing", "telemetry-server"] }
+# Optional: keep jemalloc as the underlying allocator (recommended for
+# long-running services). Wrap it explicitly:
+#   #[global_allocator]
+#   static GLOBAL: TrackingAllocator<tikv_jemallocator::Jemalloc> = ...;
+tikv-jemallocator = "0.6"   # only if wrapping jemalloc
 ```
 
 ```rust
@@ -97,6 +109,28 @@ Local-dev investigation workflow. The CI/diff workflow is v0.2.
 | "Which handler allocates most?" | jemalloc heap dump → manual stack→handler correlation | Sorted table, span-attributed, seconds |
 | "Which sub-span dominates within `handle_request`?" | Not answerable — heap profile gives leaf stacks, not span tree | Hierarchical, native to data model |
 | "What does `render_template` allocate when called from `request_handler` vs `background_worker`?" | Indistinguishable (same stack) | Different ancestor span, distinguishable |
+
+### Relationship to `foundations::telemetry::MemoryProfiler`
+
+Foundations already ships a heap profiler: `MemoryProfiler` is a thin
+wrapper around jemalloc's `prof:true` mode + `mallctl`, gated on
+`feature = "memory-profiling"` (which depends on `jemalloc`). It serves
+binary heap profiles at `/pprof/heap` and works only on Linux + jemalloc.
+
+culpert overlaps in *output* (both emit pprof) but is fundamentally
+different in *mechanism*: culpert wraps any `GlobalAlloc` at the Rust
+language level, samples in our own counter, and reads
+`foundations::telemetry::tracing::rustracing_span()` at sample time so
+each sample is **tagged with the active foundations span**. That's the
+unique value — a jemalloc profile cannot answer "which handler" because
+jemalloc doesn't know what a foundations span is.
+
+If you only need a stack-level heap profile, use `MemoryProfiler` —
+it's simpler and battle-tested. The two systems can coexist (independent
+sample streams); a service that wants both keeps foundations' `jemalloc`
+feature on AND wraps jemalloc with `TrackingAllocator<Jemalloc>` rather
+than letting foundations register the global allocator itself. (See the
+`default-features = false` note in the wiring example above.)
 
 ---
 
