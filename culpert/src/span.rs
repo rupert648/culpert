@@ -16,7 +16,7 @@ pub type SpanId = NonZeroU64;
 /// once at first sight or at export time, never on the alloc hot path.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SpanMetadata {
-    /// Human-readable span name (e.g. `flow_handler`, `templates::render`).
+    /// Human-readable span name (e.g. `handle_request`, `render_template`).
     pub name: String,
     /// Parent span ID, if any. Used by exporters to reconstruct the span tree.
     pub parent: Option<SpanId>,

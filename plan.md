@@ -70,18 +70,18 @@ $ culpert report prof.pb.gz
 
 Top spans by total allocations (30s, 12,400 reqs):
 ─────────────────────────────────────────────────────────
-flow_handler                       142 MB    11.4 KB/req
-├─ extract_gatherers                18.1 MB   1.5 KB/req
-├─ filters_evaluator::evaluate      48.0 MB   3.9 KB/req
-│   └─ rules_client::get_multi      36.2 MB   2.9 KB/req  ← 25%
-├─ generator::generate              62.5 MB   5.0 KB/req
-│   ├─ templates::render            28.4 MB   2.3 KB/req
-│   └─ obfuscator::transform        29.7 MB   2.4 KB/req  ← hot
+handle_request                     142 MB    11.4 KB/req
+├─ decode_input                     18.1 MB   1.5 KB/req
+├─ validate_input                   48.0 MB   3.9 KB/req
+│   └─ load_lookup_data             36.2 MB   2.9 KB/req  ← 25%
+├─ build_response                   62.5 MB   5.0 KB/req
+│   ├─ render_template              28.4 MB   2.3 KB/req
+│   └─ encode_response              29.7 MB   2.4 KB/req  ← hot
 └─ exit                              13.0 MB
 
-Top callsites within flow_handler::generator::generate:
-  templates/src/render.rs:142   12.4 MB  (44%)
-  obfuscator/src/transform.rs:218  8.1 MB (29%)
+Top callsites within handle_request::build_response:
+  render/src/template.rs:142   12.4 MB  (44%)
+  encode/src/response.rs:218    8.1 MB  (29%)
 ```
 
 ### Lead use case (locked)
@@ -95,8 +95,8 @@ Local-dev investigation workflow. The CI/diff workflow is v0.2.
 | Question | Existing answer | culpert answer |
 |----------|----------------|----------------|
 | "Which handler allocates most?" | jemalloc heap dump → manual stack→handler correlation | Sorted table, span-attributed, seconds |
-| "Which sub-span dominates within `flow_handler`?" | Not answerable — heap profile gives leaf stacks, not span tree | Hierarchical, native to data model |
-| "What does `template::render` allocate when called from `flow` vs `orchestrator`?" | Indistinguishable (same stack) | Different ancestor span, distinguishable |
+| "Which sub-span dominates within `handle_request`?" | Not answerable — heap profile gives leaf stacks, not span tree | Hierarchical, native to data model |
+| "What does `render_template` allocate when called from `request_handler` vs `background_worker`?" | Indistinguishable (same stack) | Different ancestor span, distinguishable |
 
 ---
 
