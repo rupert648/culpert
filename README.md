@@ -9,8 +9,8 @@ reports.
 
 **Status:** pre-release. v0.1 in flight; not yet on crates.io. See
 [`plan.md`](plan.md) for the design, [`notes.md`](notes.md) for the
-Phase 0 research verdicts, and [`CHANGELOG.md`](CHANGELOG.md) for what's
-landed so far.
+Phase 0 research verdicts, [`CHANGELOG.md`](CHANGELOG.md) for what's
+landed so far, and [`ROADMAP.md`](ROADMAP.md) for what's planned.
 
 ## Quickstart
 
