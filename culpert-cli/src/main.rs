@@ -30,8 +30,14 @@ enum Cmd {
         file: PathBuf,
 
         /// Filter to a specific span_name and show top callsites within it.
-        #[arg(long, value_name = "NAME")]
+        #[arg(long, value_name = "NAME", conflicts_with = "no_span")]
         span: Option<String>,
+
+        /// Filter to samples that have NO span_name label (i.e. allocations
+        /// taken outside any foundations span — tokio runtime, framework
+        /// internals, uninstrumented code paths).
+        #[arg(long)]
+        no_span: bool,
 
         /// Limit number of rows in the output.
         #[arg(long, default_value = "20")]
@@ -42,15 +48,33 @@ enum Cmd {
 fn main() {
     let cli = Cli::parse();
     let res = match cli.cmd {
-        Cmd::Report { file, span, top } => match span {
-            Some(name) => run_callsites(&file, &name, top),
-            None => run_top_spans(&file, top),
-        },
+        Cmd::Report {
+            file,
+            span,
+            no_span,
+            top,
+        } => {
+            if let Some(name) = span {
+                run_callsites(&file, Filter::WithSpan(name), top)
+            } else if no_span {
+                run_callsites(&file, Filter::NoSpan, top)
+            } else {
+                run_top_spans(&file, top)
+            }
+        }
     };
     if let Err(e) = res {
         eprintln!("error: {e}");
         std::process::exit(1);
     }
+}
+
+/// Selection criterion for a callsite report.
+enum Filter {
+    /// Only include samples tagged with `span_name = <this>`.
+    WithSpan(String),
+    /// Only include samples that have no `span_name` label.
+    NoSpan,
 }
 
 fn load(path: &PathBuf) -> Result<proto::Profile, Box<dyn std::error::Error>> {
@@ -179,44 +203,77 @@ struct CallsiteRow {
 
 fn run_callsites(
     path: &PathBuf,
-    span_name: &str,
+    filter: Filter,
     top: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let profile = load(path)?;
     let rate_bytes = profile.period.max(1) as u64;
-    let mut rows = aggregate_callsites_for_span(&profile, span_name, rate_bytes);
+    let mut rows = aggregate_callsites(&profile, &filter, rate_bytes);
 
     rows.sort_by(|a, b| b.estimated_bytes.cmp(&a.estimated_bytes));
 
     let total_bytes: u64 = rows.iter().map(|r| r.bytes_total).sum();
     let total_estimated: u64 = rows.iter().map(|r| r.estimated_bytes).sum();
 
+    let header = match &filter {
+        Filter::WithSpan(name) => {
+            format!(
+                "Top callsites within span {name:?} (sample rate {}/alloc):",
+                format_bytes(rate_bytes)
+            )
+        }
+        Filter::NoSpan => format!(
+            "Top callsites in unattributed samples — outside any foundations span \
+             (sample rate {}/alloc):",
+            format_bytes(rate_bytes)
+        ),
+    };
+
     if rows.is_empty() {
-        println!("No samples found for span_name = {span_name:?}.");
+        match &filter {
+            Filter::WithSpan(name) => println!("No samples found for span_name = {name:?}."),
+            Filter::NoSpan => println!("No unattributed samples — every sample has a span_name."),
+        }
         return Ok(());
     }
 
-    println!(
-        "Top callsites within span {span_name:?} (sample rate {}/alloc):",
-        format_bytes(rate_bytes)
-    );
+    println!("{header}");
     println!();
     print_callsite_table(&rows, total_bytes, total_estimated, top);
     Ok(())
 }
 
-fn aggregate_callsites_for_span(
+fn aggregate_callsites(
     profile: &proto::Profile,
-    span_name: &str,
+    filter: &Filter,
     rate_bytes: u64,
 ) -> Vec<CallsiteRow> {
-    let span_name_key = match string_index(profile, "span_name") {
-        Some(k) => k,
-        None => return Vec::new(),
+    let span_name_key = string_index(profile, "span_name");
+
+    // For WithSpan, look up the target string index; bail early if the name
+    // isn't in the string table.
+    let target_idx: Option<i64> = match filter {
+        Filter::WithSpan(name) => match profile.string_table.iter().position(|s| s == name) {
+            Some(i) => Some(i as i64),
+            None => return Vec::new(),
+        },
+        Filter::NoSpan => None,
     };
-    let target_idx = match profile.string_table.iter().position(|s| s == span_name) {
-        Some(i) => i as i64,
-        None => return Vec::new(),
+
+    // Predicate: include this sample?
+    let want = |sample: &proto::Sample| -> bool {
+        match (filter, span_name_key, target_idx) {
+            (Filter::WithSpan(_), Some(key), Some(target)) => sample
+                .label
+                .iter()
+                .any(|l| l.key == key && l.str == target),
+            (Filter::NoSpan, Some(key), _) => {
+                // Include if no span_name label is attached.
+                !sample.label.iter().any(|l| l.key == key)
+            }
+            (Filter::NoSpan, None, _) => true, // no span_name key at all -> all samples are no-span
+            (Filter::WithSpan(_), _, _) => false,
+        }
     };
 
     // Build id -> Location and id -> Function lookup tables to avoid
@@ -229,11 +286,9 @@ fn aggregate_callsites_for_span(
     let mut by_callsite: HashMap<String, CallsiteRow> = HashMap::new();
 
     for sample in &profile.sample {
-        let label = match sample.label.iter().find(|l| l.key == span_name_key) {
-            Some(l) if l.str == target_idx => l,
-            _ => continue,
-        };
-        let _ = label;
+        if !want(sample) {
+            continue;
+        }
 
         let count = sample.value.first().copied().unwrap_or(0).max(0) as u64;
         let bytes = sample.value.get(1).copied().unwrap_or(0).max(0) as u64;
