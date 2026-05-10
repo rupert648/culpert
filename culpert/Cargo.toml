@@ -11,3 +11,18 @@ flate2 = { workspace = true }
 parking_lot = { workspace = true }
 prost = { workspace = true }
 smallvec = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "baseline"
+harness = false
+
+[[bench]]
+name = "tracking_off"
+harness = false
+
+[[bench]]
+name = "tracking_on"
+harness = false

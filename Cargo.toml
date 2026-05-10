@@ -40,3 +40,6 @@ serde_json = "1"
 
 # culpert-cli deps
 clap = { version = "4", features = ["derive"] }
+
+# benches
+criterion = { version = "0.7", features = ["html_reports"] }
