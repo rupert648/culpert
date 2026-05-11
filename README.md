@@ -1,37 +1,79 @@
 # culpert
 
-> Find the allocation culprits in your `foundations` service.
+> Per-span heap allocation profiler for Rust services.
 
-A heap allocation profiler that attributes every sampled allocation to the
-[`foundations`](https://github.com/cloudflare/foundations) span it happened
-inside, exports pprof-format profiles, and ships a CLI for human-readable
-reports.
+A `#[global_allocator]` wrapper that attributes every sampled allocation to
+the **span** it happened inside, exports pprof-format profiles so the
+existing tool ecosystem (stock `pprof`, Speedscope, Pyroscope, Polar Signals)
+keeps working, and ships a CLI with bias-corrected reports plus a `diff`
+subcommand for CI/PR workflows.
 
-**Status:** pre-release. v0.1 in flight; not yet on crates.io. See
-[`plan.md`](plan.md) for the design, [`notes.md`](notes.md) for the
-Phase 0 research verdicts, [`CHANGELOG.md`](CHANGELOG.md) for what's
-landed so far, and [`ROADMAP.md`](ROADMAP.md) for what's planned.
+Three integration paths — pick whichever matches your service:
 
-## Quickstart
+| Your service uses… | Adapter | Cost |
+|---|---|---|
+| [`foundations`](https://github.com/cloudflare/foundations) | `culpert-foundations` | Zero instrumentation change. Existing `#[span_fn]` annotations become attribution keys. |
+| The [`tracing`](https://crates.io/crates/tracing) crate | `culpert-tracing` | Compose a `tracing_subscriber::Layer` into your subscriber stack. Existing `#[tracing::instrument]` annotations become attribution keys. |
+| Neither, or you want attribution independent of trace sampling | `culpert::scope` + `#[culpert::span_fn]` | One macro on the functions you want attributed. No external tracer. |
+
+**Status:** pre-release. v0.1 (foundations integration + pprof + CLI) and
+v0.2 in-flight work (hierarchy, `diff`, tracing adapter, sampling-independent
+attribution) all on `main`; not yet on crates.io. See [`plan.md`](plan.md)
+for the design, [`notes.md`](notes.md) for the Phase 0 research verdicts,
+[`CHANGELOG.md`](CHANGELOG.md) for what's landed so far, and
+[`ROADMAP.md`](ROADMAP.md) for what's planned.
+
+## Quickstart — standalone (`#[culpert::span_fn]`)
+
+The smallest viable setup. No external tracer:
 
 ```toml
-# Cargo.toml
+[dependencies]
+culpert = "0.1"
+```
+
+```rust
+use culpert::{Config, LocalSpanContext, TrackingAllocator};
+use std::alloc::System;
+
+#[global_allocator]
+static GLOBAL: TrackingAllocator<System> = TrackingAllocator::new(System);
+
+fn main() {
+    culpert::install(LocalSpanContext::new(), Config::default());
+
+    handle_request();
+
+    let profile = culpert::snapshot();
+    let bytes = culpert::pprof::encode_gzipped(&profile).unwrap();
+    std::fs::write("/tmp/prof.pb.gz", &bytes).unwrap();
+
+    culpert::shutdown();
+}
+
+#[culpert::span_fn("handle_request")]
+fn handle_request() {
+    // Every sampled allocation in here, transitively, is attributed to
+    // span_name = "handle_request".
+}
+```
+
+See `examples/macros` for a runnable version.
+
+## Quickstart — with `foundations`
+
+```toml
 [dependencies]
 culpert              = "0.1"
 culpert-foundations  = "0.1"
 foundations = { version = "5", default-features = false, features = ["tracing", "telemetry-server"] }
 ```
 
-The `default-features = false` is **required**: foundations defaults turn on
-its `jemalloc` feature, which makes foundations declare its own
-`#[global_allocator]`. That conflicts with culpert's `TrackingAllocator` and
-fails to link.
+The `default-features = false` is **required** — foundations' default
+`jemalloc` feature declares its own `#[global_allocator]` which conflicts
+with culpert's `TrackingAllocator` and fails to link.
 
 ```rust
-// main.rs
-use culpert::TrackingAllocator;
-use std::alloc::System;
-
 #[global_allocator]
 static GLOBAL: TrackingAllocator<System> = TrackingAllocator::new(System);
 
@@ -47,36 +89,83 @@ async fn main() {
 
     culpert_foundations::install();
 
-    // ... your existing app, with #[span_fn] instrumentation as usual.
+    // ... your existing app, with #[span_fn] annotations as usual.
 }
 ```
 
-That's it. Existing `#[span_fn]` annotations become attribution keys for free.
+Existing `#[foundations::telemetry::tracing::span_fn]` annotations become
+attribution keys for free. See `examples/foundations` (minimal) and
+`examples/mock-axum` (full HTTP service with `pprof_route`-served profile).
+
+## Quickstart — with the `tracing` crate
+
+```toml
+[dependencies]
+culpert            = "0.1"
+culpert-tracing    = "0.1"
+tracing            = "0.1"
+tracing-subscriber = "0.3"
+```
+
+```rust
+use tracing_subscriber::prelude::*;
+
+#[global_allocator]
+static GLOBAL: TrackingAllocator<System> = TrackingAllocator::new(System);
+
+fn main() {
+    tracing_subscriber::registry()
+        .with(culpert_tracing::layer())
+        .with(/* your other layers — fmt, OTLP, etc. */)
+        .init();
+
+    culpert_tracing::install();
+
+    // ... your existing app, with #[tracing::instrument] annotations as usual.
+}
+```
+
+Existing `#[tracing::instrument]` annotations become attribution keys. See
+`examples/tracing` for a runnable version.
 
 ## What you get
 
+A profile (`*.pb.gz`) you can either feed to stock `pprof` or read with the
+shipped CLI. Output below is from the `examples/mock-axum` service under
+load; the same shape works for any of the three integration paths.
+
+### Tree report — `culpert report <profile>`
+
+The default: hierarchical breakdown, with each sub-span nested under its
+parent. Built from `span_parent_id` labels emitted by whichever
+`SpanContext` was installed.
+
 ```sh
-$ curl -o /tmp/prof.pb.gz http://localhost:8081/debug/alloc/profile
-$ culpert report /tmp/prof.pb.gz
+$ culpert report /tmp/mock-axum.pb.gz
 
-Top spans by allocation (143179 samples, sample rate 4.00 KB/alloc):
-  raw_bytes        = sum of Layout::size() over sampled allocations.
-  estimated_bytes  = bias-corrected: each sample of size < rate counts for `rate`.
+Hierarchical span report (143179 samples, sample rate 4.00 KB/alloc):
+  Tree shows span_name groupings under their parents. Values are
+  bias-corrected estimates. Use --flat for a simple sorted table.
 
-  span                 samples       raw_bytes    raw %       est_bytes    est %
-  ----------------  ----------  --------------  -------  --------------  -------
-  vec                     3828         1.30 GB   97.29%         1.30 GB   70.48%
-  (no span)              60308        29.77 MB    2.18%       246.45 MB   13.07%
-  json                   46115         4.34 MB    0.32%       180.92 MB    9.59%
-  parse_payload          15300       533.77 KB    0.04%        59.77 MB    3.17%
-  validate_payload       15251       470.40 KB    0.03%        59.57 MB    3.16%
-  strings                 1318         1.54 MB    0.11%         5.87 MB    0.31%
-  nested                   908       230.55 KB    0.02%         3.55 MB    0.19%
-  build_response           151       151.00 KB    0.01%       604.00 KB    0.03%
+vec                                            1.30 GB   70.48%  (self 1.30 GB)
+(no span)                                    246.45 MB   13.07%  (self 246.45 MB)
+json                                         180.92 MB    9.59%  (self 180.92 MB)
+nested                                         3.55 MB    0.19%  (self 170.62 KB)
+├─ parse_payload                              59.77 MB    3.17%  (self 59.77 MB)
+├─ validate_payload                           59.57 MB    3.16%  (self 59.57 MB)
+└─ build_response                            604.00 KB    0.03%  (self 604.00 KB)
+strings                                        5.87 MB    0.31%  (self 5.87 MB)
 ```
 
+`--flat` switches to the previous sorted-by-bytes table for users who
+prefer it. `raw_bytes` is the sum of `Layout::size()` over sampled
+allocations (what stock pprof shows). `est_bytes` is the bias-corrected
+estimate — every sample below the sample rate counts as `rate_bytes`.
+
+### Drill into one span — `--span <name>`
+
 ```sh
-$ culpert report /tmp/prof.pb.gz --span json --top 4
+$ culpert report /tmp/mock-axum.pb.gz --span json --top 4
 
 Top callsites within span "json" (sample rate 4.00 KB/alloc):
   callsite                                                  samples    raw_bytes    est_bytes
@@ -85,14 +174,17 @@ Top callsites within span "json" (sample rate 4.00 KB/alloc):
   alloc::fmt::format::{closure}                              23000    314.45 KB    89.84 MB
 ```
 
-`--no-span` flips the filter to drill into samples taken outside any
-foundations span (tokio runtime, axum/hyper internals, foundations' own
-trace reporter):
+### Drill into the unattributed bucket — `--no-span`
+
+Useful for "is this my code's fault, or the runtime's?". Shows the top
+callsites of allocations that fired outside any span — i.e. tokio runtime
+work, framework internals, foundations' or `tracing`'s own reporters, or
+code paths you haven't yet annotated.
 
 ```sh
-$ culpert report /tmp/prof.pb.gz --no-span --top 4
+$ culpert report /tmp/mock-axum.pb.gz --no-span --top 4
 
-Top callsites in unattributed samples — outside any foundations span:
+Top callsites in unattributed samples — outside any span:
   callsite                                                  samples    raw_bytes    est_bytes
   -------------------------------------------------------  --------  -----------  -----------
   cf_rustracing_jaeger::Tag as Clone>::clone                  8720    90.48 KB    34.06 MB
@@ -101,12 +193,38 @@ Top callsites in unattributed samples — outside any foundations span:
   bytes::bytes_mut::BytesMut::reserve_inner                   2307    14.42 MB    16.00 MB
 ```
 
-The output is also a stock pprof file, so anything pprof can do works:
+### Compare two profiles — `culpert diff`
+
+For CI workflows: diff a "before" and "after" profile by `span_name` with
+both an absolute (`--threshold-bytes`) and a relative (`--threshold-pct`)
+gate. `--format markdown` produces output you can pipe straight into
+`$GITHUB_STEP_SUMMARY`:
 
 ```sh
-pprof -tags        /tmp/prof.pb.gz   # totals grouped by span_name + span_id
-pprof -tagfocus="span_name:json" -text /tmp/prof.pb.gz
-pprof -http=:8090  /tmp/prof.pb.gz   # interactive flame graph + source view
+$ culpert diff before.pb.gz after.pb.gz --format markdown
+
+### culpert: allocation diff
+
+- **before:** `before.pb.gz` — total 2.70 MB (estimated)
+- **after:**  `after.pb.gz` — total 5.75 MB (estimated)
+- **net Δ:** +3.05 MB (+113.21%)
+
+#### Regressions
+
+| Span | Before | After | Δ | Δ% |
+|------|-------:|------:|--:|---:|
+| `encode_response` | 1.53 MB | 4.58 MB | +3.05 MB | +200.00% |
+```
+
+### Stock `pprof` works too
+
+The on-disk format is canonical pprof, so everything in the ecosystem reads
+it:
+
+```sh
+pprof -tags        /tmp/mock-axum.pb.gz   # totals grouped by span_name + span_id
+pprof -tagfocus="span_name:json" -text /tmp/mock-axum.pb.gz
+pprof -http=:8090  /tmp/mock-axum.pb.gz   # interactive flame graph + source view
 ```
 
 ## Comparison
