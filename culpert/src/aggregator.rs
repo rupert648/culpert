@@ -97,12 +97,15 @@ pub(crate) fn snapshot(config: &Config, ctx: &dyn SpanContext) -> Profile {
     // Seed the spans map with metadata for every span referenced by a
     // sample, then walk parent chains transitively so the report can
     // build a complete tree even when a parent span had no allocations
-    // of its own (and therefore no direct samples).
+    // of its own (and therefore no direct samples). The `entry`-based
+    // dedupe handles cycles automatically: if a node is already in the
+    // map, the `or_insert_with` closure doesn't run and we don't
+    // re-enqueue its parent.
     let mut spans: HashMap<SpanId, SpanMetadata> = HashMap::new();
     let mut frontier: Vec<SpanId> = Vec::new();
     for entry in &entries {
         if let Some(id) = entry.span {
-            if !spans.contains_key(&id) {
+            spans.entry(id).or_insert_with(|| {
                 let meta = ctx.metadata(id).unwrap_or_else(|| SpanMetadata {
                     name: format!("<unknown:{}>", id.get()),
                     parent: None,
@@ -110,24 +113,21 @@ pub(crate) fn snapshot(config: &Config, ctx: &dyn SpanContext) -> Profile {
                 if let Some(parent) = meta.parent {
                     frontier.push(parent);
                 }
-                spans.insert(id, meta);
-            }
+                meta
+            });
         }
     }
     while let Some(parent_id) = frontier.pop() {
-        if spans.contains_key(&parent_id) {
-            continue;
-        }
-        let meta = ctx.metadata(parent_id).unwrap_or_else(|| SpanMetadata {
-            name: format!("<unknown:{}>", parent_id.get()),
-            parent: None,
-        });
-        if let Some(grandparent) = meta.parent {
-            if !spans.contains_key(&grandparent) {
+        spans.entry(parent_id).or_insert_with(|| {
+            let meta = ctx.metadata(parent_id).unwrap_or_else(|| SpanMetadata {
+                name: format!("<unknown:{}>", parent_id.get()),
+                parent: None,
+            });
+            if let Some(grandparent) = meta.parent {
                 frontier.push(grandparent);
             }
-        }
-        spans.insert(parent_id, meta);
+            meta
+        });
     }
 
     crate::debug::dbglog!("aggregator::snapshot: done");
