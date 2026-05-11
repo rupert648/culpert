@@ -23,6 +23,14 @@ fn main() {
     let path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "/tmp/culpert.pb.gz".to_string());
+    // Optional second argv: scale factor applied to the encode_response
+    // workload only. Lets `culpert diff` be hand-tested with a known
+    // regression — `dump_pprof before.pb.gz` then `dump_pprof after.pb.gz 3`
+    // produces a profile where encode_response allocates 3x the bytes.
+    let encode_factor: usize = std::env::args()
+        .nth(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
 
     let mock = MockSpanContext::new();
     culpert::install(
@@ -60,7 +68,7 @@ fn main() {
 
     {
         let _g = mock.enter(encode_response, "encode_response", Some(handle_request));
-        for _ in 0..40 {
+        for _ in 0..(40 * encode_factor) {
             let v: Vec<u32> = (0..10_000).collect();
             std::hint::black_box(&v);
         }

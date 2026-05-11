@@ -18,35 +18,25 @@ Three tiers, in order of likely impact on adoption.
 
 ### Tier 1 — headline features
 
-#### 1. `culpert diff` CLI
+#### 1. `culpert diff` CLI — **shipped (flat)**
 
-Compare two pprof profiles, output a diff report grouped by span.
+Compare two pprof profiles by `span_name` and emit a regression /
+improvement report. Two output formats: text (terminal) and markdown
+(designed for PR comments; pipe into `$GITHUB_STEP_SUMMARY`).
+Configurable absolute (`--threshold-bytes`) and relative
+(`--threshold-pct`) thresholds — both gates must pass for a row to
+surface. NEW and GONE spans are called out explicitly.
 
-```text
-$ culpert diff before.pb.gz after.pb.gz
-Top span regressions:
-  render_template      +18.4 MB    (+22%)   ← regression
-  validate_input        +2.1 MB    (+5%)
-  parse_input           -0.8 MB    (-3%)
-```
-
-This is the original v0.2 marquee from `plan.md` and the feature that
-makes span attribution genuinely valuable: it powers PR/CI-comment
-workflows where every PR posts an "allocation impact" comment. Without
-this, culpert is a useful local-dev tool; with it, it's a
-regression-prevention tool that earns a place in CI.
-
-**Where it lives today:** mentioned in `plan.md` § "What v0.1 ships /
-out of scope", `CHANGELOG.md` "Known limits", `README.md` "Honest scope
-limits".
-
-**Open design points:**
-- Output format: text-table by default, `--format=json` for machine
-  consumption (GitHub Action), `--format=pprof` to write a delta-pprof?
-- Significance threshold: ignore differences below N bytes / N % to
-  reduce noise from sampling jitter.
-- Confidence bands: a single sample's variance at 1-in-512 KiB is
-  ±~30 %; the diff should not flag changes within sampling noise.
+What's deferred to a v0.2.x polish round:
+- **Hierarchical diff** — regressions nested under their parent span,
+  using the same tree builder as `culpert report`. Flat is enough for
+  the headline value (PR comments).
+- **JSON output.** Useful for downstream machine consumption; tabled
+  until someone asks.
+- **Statistical confidence bands.** Single-sample variance at 1-in-N
+  is ~±sqrt(B/N)·N per span. A future version could compute the gate
+  threshold from sampling theory instead of arbitrary defaults.
+- **`--format=pprof`** to write a delta-pprof — possible, niche.
 
 #### 2. Span hierarchy / proper parent tracking — **shipped (Path B)**
 
@@ -147,17 +137,18 @@ limits" #2.
 
 ## Suggested ordering for v0.2
 
-1. ~~**Span hierarchy** (Tier 1 #2)~~ — **shipped.** See above.
-2. **`culpert diff`** (Tier 1 #1) — next. Now that we have hierarchy in
-   the report, the diff output can group regressions under their parent
-   spans naturally.
-3. **Frame-pointer capture** (Tier 2 #4) — removes the loudest
+1. ~~**Span hierarchy** (Tier 1 #2)~~ — **shipped.**
+2. ~~**`culpert diff`** (Tier 1 #1)~~ — **shipped (flat).** Hierarchical
+   diff stays a polish item.
+3. **Frame-pointer capture** (Tier 2 #4) — next. Removes the loudest
    production complaint; visible in the README's overhead numbers.
-4. Then opportunistically: geometric sampling, the `tracing` adapter,
-   metadata eviction.
+4. **`tracing` adapter** (Tier 1 #3) — broadens beyond foundations.
+5. Then opportunistically: geometric sampling, metadata eviction,
+   hierarchical diff polish, JSON diff output.
 
-Hierarchy + diff together is what makes v0.2 a real second release.
-Everything else is incrementally nice but not narrative-changing.
+Hierarchy + diff together is what makes v0.2 a real second release —
+that core is now in. Tier 2 / 3 items are improvements rather than
+new capabilities.
 
 ---
 

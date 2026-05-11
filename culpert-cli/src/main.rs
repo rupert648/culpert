@@ -1,6 +1,6 @@
-//! culpert-cli — `culpert report` for now, `culpert diff` planned for v0.2.
+//! culpert-cli — `culpert report` and `culpert diff`.
 //!
-//! Reads a culpert pprof profile (gzipped) and prints a human-readable
+//! `report` reads one culpert pprof profile and prints a human-readable
 //! summary. Four views:
 //!
 //! - **tree** (default): hierarchical breakdown using `span_parent_id`
@@ -9,6 +9,12 @@
 //! - **callsites in span** (`--span <name>`): top callsites within that span
 //! - **callsites with no span** (`--no-span`): top callsites in samples
 //!   taken outside any foundations span
+//!
+//! `diff` compares two profiles by `span_name`, computes per-span
+//! regressions / improvements over a configurable threshold, and renders
+//! a text or markdown table. The markdown form is intended for PR
+//! comments (a GitHub Action can write it straight into
+//! `$GITHUB_STEP_SUMMARY`).
 
 use clap::{Parser, Subcommand};
 use culpert::pprof::{self, proto};
@@ -53,6 +59,40 @@ enum Cmd {
         #[arg(long, default_value = "20")]
         top: usize,
     },
+
+    /// Compare two culpert profiles by span and report regressions /
+    /// improvements over thresholds. Intended for CI / PR-comment workflows.
+    Diff {
+        /// "Before" profile.
+        before: PathBuf,
+        /// "After" profile.
+        after: PathBuf,
+
+        /// Maximum rows to show in each (regressions / improvements) section.
+        #[arg(long, default_value = "20")]
+        top: usize,
+
+        /// Suppress changes whose absolute delta is smaller than this many bytes.
+        /// Combined with --threshold-pct via AND: both gates must pass.
+        #[arg(long, default_value = "4096")]
+        threshold_bytes: u64,
+
+        /// Suppress changes whose absolute relative delta is smaller than this percent.
+        /// Combined with --threshold-bytes via AND: both gates must pass.
+        #[arg(long, default_value = "5.0")]
+        threshold_pct: f64,
+
+        /// Output format. `text` is human-readable; `markdown` is designed for
+        /// PR comments (e.g. piped into `$GITHUB_STEP_SUMMARY` from a CI step).
+        #[arg(long, value_enum, default_value = "text")]
+        format: DiffFormat,
+    },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum DiffFormat {
+    Text,
+    Markdown,
 }
 
 fn main() {
@@ -75,6 +115,14 @@ fn main() {
                 run_tree(&file, top)
             }
         }
+        Cmd::Diff {
+            before,
+            after,
+            top,
+            threshold_bytes,
+            threshold_pct,
+            format,
+        } => run_diff(&before, &after, top, threshold_bytes, threshold_pct, format),
     };
     if let Err(e) = res {
         eprintln!("error: {e}");
@@ -678,5 +726,354 @@ fn format_bytes(b: u64) -> String {
         format!("{:.2} KB", b as f64 / K as f64)
     } else {
         format!("{b} B")
+    }
+}
+
+fn format_signed_bytes(delta: i64) -> String {
+    if delta >= 0 {
+        format!("+{}", format_bytes(delta as u64))
+    } else {
+        format!("-{}", format_bytes(delta.unsigned_abs()))
+    }
+}
+
+// ---- diff --------------------------------------------------------------
+
+/// Per-span delta entry for the diff report.
+struct DiffRow {
+    name: String,
+    before: u64,
+    after: u64,
+    delta: i64,
+    /// `None` means the span only appeared on one side and a percentage is
+    /// not meaningful (NEW or GONE). `Some(p)` is signed: positive = grew,
+    /// negative = shrank.
+    pct: Option<f64>,
+    kind: DiffKind,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DiffKind {
+    /// Span got bigger by both gates.
+    Regression,
+    /// Span got smaller by both gates.
+    Improvement,
+    /// Span appeared in `after` but not in `before`.
+    New,
+    /// Span was in `before` but is absent from `after`.
+    Gone,
+    /// Change is below at least one threshold.
+    Quiet,
+}
+
+fn run_diff(
+    before_path: &PathBuf,
+    after_path: &PathBuf,
+    top: usize,
+    threshold_bytes: u64,
+    threshold_pct: f64,
+    format: DiffFormat,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let before_profile = load(before_path)?;
+    let after_profile = load(after_path)?;
+
+    if before_profile.period != after_profile.period {
+        return Err(format!(
+            "sample rates differ: before={} bytes/sample, after={} bytes/sample. \
+             Profiles taken at different rates aren't directly comparable; re-take \
+             both with the same Config::rate_bytes.",
+            before_profile.period, after_profile.period
+        )
+        .into());
+    }
+    let rate = before_profile.period.max(1) as u64;
+
+    let before_rows = aggregate_by_span(&before_profile, rate);
+    let after_rows = aggregate_by_span(&after_profile, rate);
+
+    let before_total: u64 = before_rows.iter().map(|r| r.estimated_bytes).sum();
+    let after_total: u64 = after_rows.iter().map(|r| r.estimated_bytes).sum();
+
+    use std::collections::HashMap;
+    let before_by_name: HashMap<String, u64> = before_rows
+        .into_iter()
+        .map(|r| (r.name, r.estimated_bytes))
+        .collect();
+    let after_by_name: HashMap<String, u64> = after_rows
+        .into_iter()
+        .map(|r| (r.name, r.estimated_bytes))
+        .collect();
+
+    // Union of span names present in either profile.
+    let mut all_names: Vec<&String> = before_by_name
+        .keys()
+        .chain(after_by_name.keys())
+        .collect();
+    all_names.sort();
+    all_names.dedup();
+
+    let mut diffs: Vec<DiffRow> = all_names
+        .into_iter()
+        .map(|name| {
+            let before = before_by_name.get(name).copied().unwrap_or(0);
+            let after = after_by_name.get(name).copied().unwrap_or(0);
+            let delta = after as i64 - before as i64;
+            let pct = if before == 0 {
+                None
+            } else {
+                Some(100.0 * delta as f64 / before as f64)
+            };
+            let kind = classify(before, after, delta, pct, threshold_bytes, threshold_pct);
+            DiffRow {
+                name: name.clone(),
+                before,
+                after,
+                delta,
+                pct,
+                kind,
+            }
+        })
+        .collect();
+
+    // Sort all rows by |delta| descending so the most impactful changes
+    // surface first in each section.
+    diffs.sort_by_key(|d| std::cmp::Reverse(d.delta.unsigned_abs()));
+
+    let regressions: Vec<&DiffRow> = diffs
+        .iter()
+        .filter(|d| matches!(d.kind, DiffKind::Regression | DiffKind::New))
+        .take(top)
+        .collect();
+    let improvements: Vec<&DiffRow> = diffs
+        .iter()
+        .filter(|d| matches!(d.kind, DiffKind::Improvement | DiffKind::Gone))
+        .take(top)
+        .collect();
+    let quiet_count = diffs
+        .iter()
+        .filter(|d| matches!(d.kind, DiffKind::Quiet))
+        .count();
+
+    let summary = DiffSummary {
+        before_path,
+        after_path,
+        before_total,
+        after_total,
+        rate_bytes: rate,
+        threshold_bytes,
+        threshold_pct,
+        quiet_count,
+    };
+
+    match format {
+        DiffFormat::Text => render_diff_text(&summary, &regressions, &improvements),
+        DiffFormat::Markdown => render_diff_markdown(&summary, &regressions, &improvements),
+    }
+    Ok(())
+}
+
+fn classify(
+    before: u64,
+    after: u64,
+    delta: i64,
+    pct: Option<f64>,
+    threshold_bytes: u64,
+    threshold_pct: f64,
+) -> DiffKind {
+    if before == 0 && after > 0 {
+        return if after >= threshold_bytes {
+            DiffKind::New
+        } else {
+            DiffKind::Quiet
+        };
+    }
+    if before > 0 && after == 0 {
+        return if before >= threshold_bytes {
+            DiffKind::Gone
+        } else {
+            DiffKind::Quiet
+        };
+    }
+    let abs_bytes = delta.unsigned_abs();
+    let passes_bytes = abs_bytes >= threshold_bytes;
+    let passes_pct = pct.is_some_and(|p| p.abs() >= threshold_pct);
+    if !(passes_bytes && passes_pct) {
+        return DiffKind::Quiet;
+    }
+    if delta > 0 {
+        DiffKind::Regression
+    } else {
+        DiffKind::Improvement
+    }
+}
+
+struct DiffSummary<'a> {
+    before_path: &'a PathBuf,
+    after_path: &'a PathBuf,
+    before_total: u64,
+    after_total: u64,
+    rate_bytes: u64,
+    threshold_bytes: u64,
+    threshold_pct: f64,
+    quiet_count: usize,
+}
+
+fn render_diff_text(summary: &DiffSummary, regressions: &[&DiffRow], improvements: &[&DiffRow]) {
+    let total_delta = summary.after_total as i64 - summary.before_total as i64;
+    let total_pct = if summary.before_total == 0 {
+        0.0
+    } else {
+        100.0 * total_delta as f64 / summary.before_total as f64
+    };
+
+    println!("Allocation diff:");
+    println!("  before:  {}", summary.before_path.display());
+    println!("           total {} (estimated)", format_bytes(summary.before_total));
+    println!("  after:   {}", summary.after_path.display());
+    println!(
+        "           total {} (estimated)  Δ = {}  ({:+.2}%)",
+        format_bytes(summary.after_total),
+        format_signed_bytes(total_delta),
+        total_pct
+    );
+    println!(
+        "  rate:    {}/alloc",
+        format_bytes(summary.rate_bytes)
+    );
+    println!(
+        "  filter:  show changes ≥ {} AND ≥ {:.2}%",
+        format_bytes(summary.threshold_bytes),
+        summary.threshold_pct
+    );
+    println!();
+
+    print_diff_section_text("Regressions", regressions);
+    println!();
+    print_diff_section_text("Improvements", improvements);
+
+    if summary.quiet_count > 0 {
+        println!();
+        println!(
+            "{} span(s) suppressed by thresholds.",
+            summary.quiet_count
+        );
+    }
+}
+
+fn print_diff_section_text(title: &str, rows: &[&DiffRow]) {
+    if rows.is_empty() {
+        println!("{title}: none");
+        return;
+    }
+    let name_w = rows.iter().map(|r| r.name.len()).max().unwrap_or(20).max(20);
+    println!("{title}:");
+    println!(
+        "  {:<name_w$}  {:>12}  {:>12}  {:>12}  {:>8}",
+        "span", "before", "after", "Δ", "Δ%",
+        name_w = name_w
+    );
+    println!(
+        "  {:-<name_w$}  {:->12}  {:->12}  {:->12}  {:->8}",
+        "", "", "", "", "",
+        name_w = name_w
+    );
+    for d in rows {
+        let pct_cell = match (d.kind, d.pct) {
+            (DiffKind::New, _) => "NEW".to_string(),
+            (DiffKind::Gone, _) => "GONE".to_string(),
+            (_, Some(p)) => format!("{p:+.2}%"),
+            (_, None) => "—".to_string(),
+        };
+        println!(
+            "  {:<name_w$}  {:>12}  {:>12}  {:>12}  {:>8}",
+            d.name,
+            format_bytes(d.before),
+            format_bytes(d.after),
+            format_signed_bytes(d.delta),
+            pct_cell,
+            name_w = name_w
+        );
+    }
+}
+
+fn render_diff_markdown(
+    summary: &DiffSummary,
+    regressions: &[&DiffRow],
+    improvements: &[&DiffRow],
+) {
+    let total_delta = summary.after_total as i64 - summary.before_total as i64;
+    let total_pct = if summary.before_total == 0 {
+        0.0
+    } else {
+        100.0 * total_delta as f64 / summary.before_total as f64
+    };
+
+    println!("### culpert: allocation diff");
+    println!();
+    println!(
+        "- **before:** `{}` — total {} (estimated)",
+        summary.before_path.display(),
+        format_bytes(summary.before_total)
+    );
+    println!(
+        "- **after:**  `{}` — total {} (estimated)",
+        summary.after_path.display(),
+        format_bytes(summary.after_total)
+    );
+    println!(
+        "- **net Δ:** {} ({:+.2}%)",
+        format_signed_bytes(total_delta),
+        total_pct
+    );
+    println!(
+        "- **sample rate:** {}/alloc",
+        format_bytes(summary.rate_bytes)
+    );
+    println!(
+        "- **filter:** show changes ≥ {} AND ≥ {:.2}%",
+        format_bytes(summary.threshold_bytes),
+        summary.threshold_pct
+    );
+    println!();
+
+    print_diff_section_markdown("Regressions", regressions);
+    println!();
+    print_diff_section_markdown("Improvements", improvements);
+
+    if summary.quiet_count > 0 {
+        println!();
+        println!(
+            "<sub>{} span(s) suppressed by thresholds.</sub>",
+            summary.quiet_count
+        );
+    }
+}
+
+fn print_diff_section_markdown(title: &str, rows: &[&DiffRow]) {
+    if rows.is_empty() {
+        println!("#### {title}");
+        println!();
+        println!("_None._");
+        return;
+    }
+    println!("#### {title}");
+    println!();
+    println!("| Span | Before | After | Δ | Δ% |");
+    println!("|------|-------:|------:|--:|---:|");
+    for d in rows {
+        let pct_cell = match (d.kind, d.pct) {
+            (DiffKind::New, _) => "_new_".to_string(),
+            (DiffKind::Gone, _) => "_gone_".to_string(),
+            (_, Some(p)) => format!("{p:+.2}%"),
+            (_, None) => "—".to_string(),
+        };
+        println!(
+            "| `{}` | {} | {} | {} | {} |",
+            d.name,
+            format_bytes(d.before),
+            format_bytes(d.after),
+            format_signed_bytes(d.delta),
+            pct_cell,
+        );
     }
 }

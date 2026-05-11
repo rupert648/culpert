@@ -18,6 +18,25 @@ to crates.io. Until then, depend on this project from a git URL.
   from those labels (`├─` / `└─` / `│` box-drawing); `--flat` falls back
   to the previous sorted-by-bytes table.
 
+- **`culpert diff`.** New subcommand: `culpert diff <before.pb.gz> <after.pb.gz>`
+  compares two profiles by `span_name`, computes per-span byte deltas
+  (using the bias-corrected estimate), and emits a regression / improvement
+  report. Two output formats:
+  - **text** (default) — terminal-friendly table.
+  - **markdown** (`--format markdown`) — designed for PR comments; a
+    GitHub Action can pipe it into `$GITHUB_STEP_SUMMARY`.
+
+  Configurable thresholds:
+  - `--threshold-bytes` (default 4 KiB) — minimum absolute change to surface.
+  - `--threshold-pct` (default 5.0) — minimum relative change to surface.
+  Both gates must pass for a row to appear; changes below either are
+  hidden and counted in a summary footer. NEW / GONE spans (one-sided
+  presence) are flagged explicitly.
+
+  Errors out if `before` and `after` have different sample rates — they
+  aren't directly comparable. Hierarchical diff (regressions nested under
+  their parent span) is a polish item, deferred.
+
 ### Added in v0.1
 
 #### `culpert` (core)
