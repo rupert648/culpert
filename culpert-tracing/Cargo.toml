@@ -1,0 +1,14 @@
+[package]
+name = "culpert-tracing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "tracing-crate adapter for culpert: maps tracing::Span IDs into culpert's SpanContext via a tracing_subscriber::Layer."
+
+[dependencies]
+culpert = { workspace = true }
+parking_lot = { workspace = true }
+tracing = { workspace = true }
+tracing-core = { workspace = true }
+tracing-subscriber = { workspace = true }

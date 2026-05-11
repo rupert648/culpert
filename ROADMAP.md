@@ -60,16 +60,19 @@ What landed:
 - Foundations integration test now asserts parent extraction
   end-to-end.
 
-#### 3. `culpert-tracing` adapter
+#### 3. `culpert-tracing` adapter — **shipped**
 
-A `culpert-tracing` crate mapping the [`tracing`](https://crates.io/crates/tracing)
-crate's `Span` IDs into culpert's `SpanContext`. Opens culpert to ~the
-entire Rust async ecosystem outside Cloudflare. The architecture was
-deliberately set up for this in v0.1 — the core is span-source-agnostic
-and the foundations adapter is the working blueprint. Mostly an
-adapter implementation.
+A new `culpert-tracing` crate mirroring the foundations adapter:
+`culpert_tracing::layer()` returns a `tracing_subscriber::Layer` that
+captures span name + parent at creation time, and
+`culpert_tracing::install()` registers a `TracingSpanContext` that
+resolves `tracing::Span::current().id()` plus the layer-captured
+metadata. Compose the layer into the subscriber stack alongside
+whatever other layers the user already has.
 
-**Where it lives today:** `plan.md` § "Out of scope".
+The architecture was deliberately set up for this in v0.1 — the core
+is span-source-agnostic and the foundations adapter was the working
+blueprint.
 
 ---
 
@@ -101,25 +104,24 @@ sample on the slow path).
 `culpert-cli/src/main.rs` notes the trade-off in its doc-comment;
 `README.md` Phase 6 section mentions the bias indirectly.
 
-#### 6. Sampling-independent attribution
+#### 6. Sampling-independent attribution — **shipped (sync)**
 
-Today `FoundationsSpanContext::current_span` gates on
-`span_is_sampled() == true`. With foundations tracing at 1 % sampling,
-99 % of allocations land in `(no span)`. Two paths:
+`culpert::scope::enter(name) -> Scope` is the runtime entry point;
+`#[culpert::span_fn("name")]` (from the new `culpert-macros` proc-macro
+crate, re-exported at `culpert::span_fn`) is the ergonomic wrapper.
+Each `enter` mints a fresh culpert-owned `SpanId`, pushes it onto a
+thread-local stack with parent linkage, and snapshots metadata.
+`LocalSpanContext` reads from that stack — no dependency on any
+external tracer's sampling rate.
 
-- **Mint our own SpanIds at scope-enter** regardless of foundations'
-  trace sampling. Requires intercepting scope creation, which means
-  shipping `#[culpert::span_fn]` (a sibling of foundations' `span_fn`)
-  for spans users care about.
-- **Use the Arc pointer with a "did we just see this" disambiguator**
-  to distinguish legit reuse from fresh span. Fragile; haven't fully
-  designed.
+The aggregator was upgraded to walk parent chains transitively when
+building `Profile.spans`, so the tree report works end-to-end even
+when a parent span had no direct samples of its own.
 
-The macro path is cleaner. Trade: opt-in instrumentation change for
-users on low trace-sampling rates.
-
-**Where it lives today:** `notes.md` Q2 verdict, `CHANGELOG.md` "Known
-limits" #2.
+**Sync-only in v0.2.** The macro emits a compile error on `async fn`.
+A `ScopedFuture` wrapper with careful parent-capture-on-construction
+semantics is a v0.2.x follow-up (so the macro can support async
+without subtle parent-resolution surprises).
 
 ---
 
@@ -140,23 +142,17 @@ limits" #2.
 1. ~~**Span hierarchy** (Tier 1 #2)~~ — **shipped.**
 2. ~~**`culpert diff`** (Tier 1 #1)~~ — **shipped (flat).** Hierarchical
    diff stays a polish item.
-3. **`tracing` adapter** (Tier 1 #3) — **next session.** Broadens
-   culpert beyond foundations. New `culpert-tracing` crate following the
-   same shape as `culpert-foundations`.
-4. **Sampling-independent attribution** (Tier 2 #6) — **also next
-   session, after tracing adapter.** Ship a `#[culpert::span_fn]` macro
-   so allocation attribution stops being gated on foundations' trace
-   sampling rate.
-5. **Frame-pointer capture** (Tier 2 #4) — deferred. Drops the loudest
-   production overhead complaint but doesn't add new capability.
+3. ~~**`tracing` adapter** (Tier 1 #3)~~ — **shipped.**
+4. ~~**Sampling-independent attribution** (Tier 2 #6)~~ — **shipped (sync).**
+   Async support via `ScopedFuture` is a v0.2.x follow-up.
+5. **Frame-pointer capture** (Tier 2 #4) — next. Drops the loudest
+   production overhead complaint.
 6. Then opportunistically: geometric sampling, metadata eviction,
-   hierarchical diff polish, JSON diff output.
+   hierarchical diff polish, JSON diff output, async `#[culpert::span_fn]`.
 
-Hierarchy + diff together is what makes v0.2 a real second release —
-that core is now in. The next two items (tracing adapter + culpert
-span_fn) broaden culpert's reach: the first opens it beyond
-foundations, the second decouples attribution quality from trace
-sampling.
+The v0.2 marquee is in: hierarchy, diff, broader-ecosystem reach
+(`tracing`), and sampling-independent attribution. Remaining items are
+overhead reduction and polish.
 
 ---
 

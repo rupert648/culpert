@@ -1,0 +1,15 @@
+[package]
+name = "culpert-macros"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Proc-macros for culpert. The crate-root re-exports the macros at `culpert::span_fn`; depend on `culpert` rather than this crate directly."
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true }

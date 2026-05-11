@@ -37,6 +37,35 @@ to crates.io. Until then, depend on this project from a git URL.
   aren't directly comparable. Hierarchical diff (regressions nested under
   their parent span) is a polish item, deferred.
 
+- **`culpert-tracing` adapter.** New crate mirroring `culpert-foundations`
+  for the `tracing`-crate ecosystem. `culpert_tracing::layer()` returns a
+  `tracing_subscriber::Layer` that captures span name + parent at
+  creation time; `culpert_tracing::install()` registers a
+  `TracingSpanContext` that resolves `tracing::Span::current()` IDs and
+  reads the snapshotted metadata. Compose the layer with the rest of
+  your subscriber stack (`tracing_subscriber::registry().with(...)`).
+
+- **`culpert::scope` + `#[culpert::span_fn]`** — **sampling-independent
+  attribution.** Culpert now ships its own thread-local scope stack and
+  `LocalSpanContext` for attribution that doesn't depend on any external
+  tracer or its sampling rate.
+  - `culpert::scope::enter(name) -> Scope` is the runtime entry point.
+  - `#[culpert::span_fn("name")]` (re-exported from a new
+    `culpert-macros` proc-macro crate) wraps a sync function body with
+    `let _g = culpert::scope::enter(name);`. RAII-popped on any exit
+    path (`?`, early `return`, panic).
+  - `LocalSpanContext` reads from the scope stack; install with
+    `culpert::install(LocalSpanContext::new(), config)`.
+  - Hierarchy is captured directly (parent = previous top-of-stack)
+    so the tree view works end-to-end without external help.
+  - Aggregator now walks parent chains transitively at snapshot time
+    so the tree report includes parent spans that themselves had no
+    direct samples (e.g. a `handle_request` whose body only orchestrates
+    sub-spans).
+  - **Sync-only in v0.2.** The macro emits a compile error on `async fn`
+    with a pointer to the foundations / tracing adapters; a `ScopedFuture`
+    wrapper for clean async parent semantics is a v0.2.x follow-up.
+
 ### Added in v0.1
 
 #### `culpert` (core)

@@ -94,16 +94,40 @@ pub(crate) fn snapshot(config: &Config, ctx: &dyn SpanContext) -> Profile {
 
     crate::debug::dbglog!("aggregator::snapshot: resolved, looking up span metadata");
 
-    let mut spans = HashMap::new();
+    // Seed the spans map with metadata for every span referenced by a
+    // sample, then walk parent chains transitively so the report can
+    // build a complete tree even when a parent span had no allocations
+    // of its own (and therefore no direct samples).
+    let mut spans: HashMap<SpanId, SpanMetadata> = HashMap::new();
+    let mut frontier: Vec<SpanId> = Vec::new();
     for entry in &entries {
         if let Some(id) = entry.span {
-            spans.entry(id).or_insert_with(|| {
-                ctx.metadata(id).unwrap_or_else(|| SpanMetadata {
+            if !spans.contains_key(&id) {
+                let meta = ctx.metadata(id).unwrap_or_else(|| SpanMetadata {
                     name: format!("<unknown:{}>", id.get()),
                     parent: None,
-                })
-            });
+                });
+                if let Some(parent) = meta.parent {
+                    frontier.push(parent);
+                }
+                spans.insert(id, meta);
+            }
         }
+    }
+    while let Some(parent_id) = frontier.pop() {
+        if spans.contains_key(&parent_id) {
+            continue;
+        }
+        let meta = ctx.metadata(parent_id).unwrap_or_else(|| SpanMetadata {
+            name: format!("<unknown:{}>", parent_id.get()),
+            parent: None,
+        });
+        if let Some(grandparent) = meta.parent {
+            if !spans.contains_key(&grandparent) {
+                frontier.push(grandparent);
+            }
+        }
+        spans.insert(parent_id, meta);
     }
 
     crate::debug::dbglog!("aggregator::snapshot: done");

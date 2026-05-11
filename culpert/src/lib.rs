@@ -62,6 +62,7 @@
 pub mod config;
 pub mod mock;
 pub mod pprof;
+pub mod scope;
 pub mod span;
 
 mod aggregator;
@@ -103,6 +104,8 @@ mod debug {
 pub use aggregator::{Frame, Profile, ProfileEntry};
 pub use allocator::TrackingAllocator;
 pub use config::Config;
+pub use culpert_macros::span_fn;
 pub use global::{install, snapshot};
 pub use mock::{MockSpanContext, MockSpanGuard};
+pub use scope::{LocalSpanContext, Scope};
 pub use span::{SpanContext, SpanId, SpanMetadata};

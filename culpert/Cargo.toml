@@ -8,6 +8,7 @@ description = "Per-span heap allocation profiler core for Rust services."
 
 [dependencies]
 backtrace = { workspace = true }
+culpert-macros = { workspace = true }
 flate2 = { workspace = true }
 parking_lot = { workspace = true }
 prost = { workspace = true }

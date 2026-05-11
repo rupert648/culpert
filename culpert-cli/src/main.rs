@@ -172,9 +172,10 @@ fn run_tree(path: &PathBuf, top: usize) -> Result<(), Box<dyn std::error::Error>
         format_bytes(rate_bytes)
     );
     println!(
-        "  Tree shows span_name groupings under their parents (cf-rustracing\n  \
-           ChildOf references). Values are bias-corrected estimates.\n  \
-           Use --flat for a simple sorted-by-bytes table without hierarchy."
+        "  Tree shows span_name groupings under their parents (from\n  \
+           `span_parent_id` labels emitted by whichever SpanContext was\n  \
+           installed). Values are bias-corrected estimates. Use --flat for\n  \
+           a simple sorted-by-bytes table without hierarchy."
     );
     println!();
 
