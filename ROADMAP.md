@@ -48,26 +48,27 @@ limits".
 - Confidence bands: a single sample's variance at 1-in-512 KiB is
   ±~30 %; the diff should not flag changes within sampling noise.
 
-#### 2. Span hierarchy / proper parent tracking
+#### 2. Span hierarchy / proper parent tracking — **shipped (Path B)**
 
-v0.1 sets `parent: None` on every foundations-sourced span because
-cf-rustracing's parent references aren't surfaced through the public
-API in a usable way. The plan's `├─ ├─ └─` tree report from
-[`plan.md`](plan.md) § "Developer journey" doesn't actually work today.
+v0.1 set `parent: None` on every foundations-sourced span because
+cf-rustracing's parent references appeared private. They weren't —
+`cf_rustracing::span::InspectableSpan::references()` is public and
+returns `&[SpanReference<T>]`, each of which has `is_child_of()` and
+`span()` exposing the parent's `SpanContextState`. Path B was the right
+call: no user instrumentation change, no opt-in macro.
 
-Two implementation paths:
+What landed:
 
-- **Wrap our own scope helper / macro** that maintains a parent stack
-  explicitly. Cleaner; users opt in by switching `#[span_fn]` to
-  `#[culpert::span_fn]` for spans they want hierarchy on.
-- **Reach into cf-rustracing internals** to extract parent SpanContext.
-  Uglier (private API surface) but no user opt-in.
-
-Either path unlocks the tree view in `culpert report` and richer pprof
-output (parent-id label per sample for downstream tooling).
-
-**Where it lives today:** `CHANGELOG.md` "Known limits" #1,
-`README.md` "Honest scope limits" #1.
+- `FoundationsSpanContext::current_span` now extracts the first
+  `ChildOf` reference's `span_id` and stores it as the parent in the
+  cached `SpanMetadata`.
+- The pprof encoder emits a `span_parent_id` numeric label on every
+  sample whose metadata has a parent.
+- `culpert report` defaults to a tree view (box-drawing `├─` / `└─` /
+  `│`), built by walking the `span_parent_id` labels. `--flat` falls
+  back to the previous sorted-by-bytes table.
+- Foundations integration test now asserts parent extraction
+  end-to-end.
 
 #### 3. `culpert-tracing` adapter
 
@@ -146,11 +147,10 @@ limits" #2.
 
 ## Suggested ordering for v0.2
 
-1. **Span hierarchy** (Tier 1 #2) — fulfils plan.md's existing promise;
-   relatively self-contained; unlocks the tree view and is a prerequisite
-   for richer diff output.
-2. **`culpert diff`** (Tier 1 #1) — the actual headline; benefits from
-   hierarchy for grouping.
+1. ~~**Span hierarchy** (Tier 1 #2)~~ — **shipped.** See above.
+2. **`culpert diff`** (Tier 1 #1) — next. Now that we have hierarchy in
+   the report, the diff output can group regressions under their parent
+   spans naturally.
 3. **Frame-pointer capture** (Tier 2 #4) — removes the loudest
    production complaint; visible in the README's overhead numbers.
 4. Then opportunistically: geometric sampling, the `tracing` adapter,

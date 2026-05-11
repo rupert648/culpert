@@ -9,7 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Pre-release. Everything below will become the `0.1.0` entry on first publish
 to crates.io. Until then, depend on this project from a git URL.
 
-### Added
+### Added in v0.2 (in-flight on `main`)
+
+- **Span hierarchy.** `FoundationsSpanContext` now extracts parent SpanIds
+  from cf-rustracing's `Span::references()`. The pprof encoder emits a
+  `span_parent_id` numeric label on every sample whose `SpanMetadata` has
+  a parent. `culpert report` defaults to a hierarchical tree view built
+  from those labels (`├─` / `└─` / `│` box-drawing); `--flat` falls back
+  to the previous sorted-by-bytes table.
+
+### Added in v0.1
 
 #### `culpert` (core)
 

@@ -94,4 +94,44 @@ fn end_to_end_attribution_through_foundations() {
         ratio < 4.0,
         "root vs other differ by >4x: root={root_bytes} other={other_bytes}"
     );
+
+    // ----- hierarchy --------------------------------------------------
+    // Enter a parent span and a child span inside it; verify the adapter
+    // extracts the parent SpanId from cf-rustracing's ChildOf reference.
+    {
+        let _parent = tracing::span("parent_via_adapter");
+        {
+            let _child = tracing::span("child_via_adapter");
+            for _ in 0..30 {
+                let v = Vec::<u8>::with_capacity(10_000);
+                std::hint::black_box(&v);
+            }
+        }
+    }
+
+    let p2 = culpert::snapshot();
+
+    // Find the two new spans by name.
+    let parent_id = p2
+        .spans
+        .iter()
+        .find(|(_, m)| m.name == "parent_via_adapter")
+        .map(|(id, _)| *id);
+    let (child_id, child_meta) = p2
+        .spans
+        .iter()
+        .find(|(_, m)| m.name == "child_via_adapter")
+        .map(|(id, m)| (*id, m.clone()))
+        .expect("child_via_adapter span should be in profile");
+
+    // The child's metadata.parent should point at the parent span's id.
+    assert_eq!(
+        child_meta.parent, parent_id,
+        "child span's parent should be the parent span (parent_id={parent_id:?}, child.parent={:?})",
+        child_meta.parent
+    );
+    eprintln!(
+        "hierarchy: parent={:?} child={:?} child.parent={:?}",
+        parent_id, child_id, child_meta.parent
+    );
 }

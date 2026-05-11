@@ -74,19 +74,24 @@ impl SpanContext for FoundationsSpanContext {
             return Some(span_id);
         }
 
-        // Slow path (first sight on this span): snapshot the name.
+        // Slow path (first sight on this span): snapshot the name + parent.
         let name = span.operation_name().to_string();
+        // cf-rustracing exposes parent relationships as SpanReferences. We
+        // take the first ChildOf reference's span_id as the parent; in
+        // typical foundations usage there's exactly one (created when
+        // tracing::span(...) calls span.child(name)). FollowsFrom-style
+        // references are ignored as not-quite-parents.
+        let parent = span
+            .references()
+            .iter()
+            .find(|r| r.is_child_of())
+            .and_then(|r| NonZeroU64::new(r.span().span_id()));
         drop(span);
 
         let mut by_id = self.by_id.write();
-        by_id.entry(span_id).or_insert_with(|| SpanMetadata {
-            name,
-            // Parent: cf-rustracing's references list is not surfaced
-            // through foundations' public API in a way that maps cleanly
-            // to a culpert SpanId. v0.1 leaves parent: None; hierarchy is
-            // recoverable from the call stack frames in the pprof output.
-            parent: None,
-        });
+        by_id
+            .entry(span_id)
+            .or_insert(SpanMetadata { name, parent });
         Some(span_id)
     }
 

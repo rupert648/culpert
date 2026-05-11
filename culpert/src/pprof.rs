@@ -20,15 +20,18 @@
 //!
 //! ## Span attribution
 //!
-//! Each sample carries two pprof labels:
+//! Each sample carries up to three pprof labels:
 //!
-//! - `span_id`   — numeric label, the SpanId minted by the SpanContext
-//! - `span_name` — string label, the human-readable span name
+//! - `span_id`        — numeric label, the SpanId minted by the SpanContext
+//! - `span_name`      — string label, the human-readable span name
+//! - `span_parent_id` — numeric label, the parent SpanId (only emitted if
+//!   the SpanContext reports a non-`None` parent in the SpanMetadata)
 //!
 //! Stock `pprof` exposes labels as filterable / groupable axes, which gets
-//! us "show only handle_request samples" out-of-the-box. Hierarchical roll-up
-//! ("which sub-span dominates within `handle_request`?") is the job of the
-//! `culpert report` CLI in Phase 5; the labels are sufficient input for it.
+//! us "show only handle_request samples" out-of-the-box. Hierarchical
+//! roll-up ("which sub-span dominates within `handle_request`?") is the
+//! job of the `culpert report` CLI; `span_parent_id` is what powers the
+//! tree view.
 
 use crate::Profile;
 use prost::Message;
@@ -298,6 +301,7 @@ fn build_proto(profile: &Profile) -> proto::Profile {
     // Pre-intern the label keys so they're stable.
     let span_id_key = strs.intern("span_id");
     let span_name_key = strs.intern("span_name");
+    let span_parent_id_key = strs.intern("span_parent_id");
 
     // Function dedup keyed by (name, filename); Location dedup keyed by ip.
     let mut funcs: HashMap<(String, String), u64> = HashMap::new();
@@ -375,6 +379,14 @@ fn build_proto(profile: &Profile) -> proto::Profile {
                     num: 0,
                     num_unit: 0,
                 });
+                if let Some(parent_id) = meta.parent {
+                    labels.push(proto::Label {
+                        key: span_parent_id_key,
+                        str: 0,
+                        num: parent_id.get() as i64,
+                        num_unit: 0,
+                    });
+                }
             }
         }
 
