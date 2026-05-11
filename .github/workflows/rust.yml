@@ -17,7 +17,10 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Build
-      run: cargo build --verbose
+      run: cargo build --workspace --verbose
+    - name: Clippy
+      # -D warnings promotes any clippy warning to an error so PRs can't
+      # land new lints. --all-targets covers tests, benches, examples.
+      run: cargo clippy --workspace --all-targets -- -D warnings
     - name: Run tests
-      run: cargo test --verbose
-          
+      run: cargo test --workspace --verbose
