@@ -22,11 +22,23 @@ thread_local! {
 ///
 /// Returns immediately without doing anything if:
 /// - no profiler is installed, or
+/// - the process has begun its `exit()` teardown
+///   (avoids a recursive-mutex deadlock against TLS destructors —
+///   see [`crate::global::is_shutting_down`]), or
 /// - we're already inside an `observe` call on this thread (recursion), or
 /// - the snapshot path on this thread has explicitly raised the guard, or
 /// - the calling thread's `IN_TRACKER` is mid-destruction (TLS shutdown).
 #[inline]
 pub(crate) fn observe(bytes: u64) {
+    // Cheap shutdown gate first. An atexit handler flips this flag
+    // BEFORE TLS destructors run, so an allocation triggered by a TLS
+    // destructor (e.g. `thread_local`'s `ThreadGuard::drop` pushing onto
+    // its global BinaryHeap, which grows and allocates) bails before
+    // calling into the SpanContext — which might otherwise attempt to
+    // re-lock a `std::sync::Mutex` the TLS destructor is already holding.
+    if crate::global::is_shutting_down() {
+        return;
+    }
     // try_with: if IN_TRACKER is mid-destruction (only happens during
     // thread teardown), treat as "already in tracker" and bail.
     let already = IN_TRACKER.try_with(|c| c.replace(true)).unwrap_or(true);

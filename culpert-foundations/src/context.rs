@@ -21,8 +21,36 @@ use culpert::{SpanContext, SpanId, SpanMetadata};
 use foundations::reexports_for_macros::cf_rustracing::span::InspectableSpan;
 use foundations::telemetry::tracing::{rustracing_span, span_is_sampled};
 use parking_lot::RwLock;
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::num::NonZeroU64;
+use std::sync::Once;
+
+thread_local! {
+    /// Set around our `catch_unwind` so the global panic hook can skip
+    /// the diagnostic print for the foundations-borrow_mut conflict
+    /// described in [`FoundationsSpanContext::current_span`]. Other
+    /// panics on other threads (or on this thread outside the catch
+    /// window) print normally.
+    static SUPPRESS_PANIC_HOOK: Cell<bool> = const { Cell::new(false) };
+}
+
+static HOOK_INSTALLED: Once = Once::new();
+
+/// Wrap the existing panic hook so it stays silent for panics that
+/// happen inside our `catch_unwind` block on this thread. Idempotent;
+/// the first call wins.
+pub(crate) fn install_panic_hook_filter() {
+    HOOK_INSTALLED.call_once(|| {
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if SUPPRESS_PANIC_HOOK.with(|c| c.get()) {
+                return;
+            }
+            prev(info);
+        }));
+    });
+}
 
 /// `culpert::SpanContext` implementation backed by foundations' tracing.
 ///
@@ -58,6 +86,37 @@ impl FoundationsSpanContext {
 
 impl SpanContext for FoundationsSpanContext {
     fn current_span(&self) -> Option<SpanId> {
+        // Defend against the foundations re-entrancy bug:
+        //
+        //   `Scope::Drop` holds `borrow_mut` on its per-thread scope-stack
+        //   RefCell while popping the just-finished span. Dropping that
+        //   span sends a finish-event over a `tokio::mpsc` channel, which
+        //   can allocate a new mpsc block. The allocation calls our
+        //   observer, which calls back into `tracing::span_is_sampled` /
+        //   `rustracing_span` — both of which `borrow()` the same RefCell
+        //   foundations is still holding `borrow_mut` on, and panic.
+        //
+        // The panic frame is entirely inside our `current_span` call; we
+        // can catch it, return `None` (lose attribution for this one
+        // sample), and let foundations' outer `Scope::Drop` continue
+        // normally. The borrow_mut belongs to a higher stack frame so our
+        // unwind doesn't disturb it. The thread-local
+        // `SUPPRESS_PANIC_HOOK` flag tells our installed hook to skip the
+        // diagnostic print on stderr for this expected panic.
+        SUPPRESS_PANIC_HOOK.with(|c| c.set(true));
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.current_span_inner()));
+        SUPPRESS_PANIC_HOOK.with(|c| c.set(false));
+        result.ok().flatten()
+    }
+
+    fn metadata(&self, span: SpanId) -> Option<SpanMetadata> {
+        self.by_id.read().get(&span).cloned()
+    }
+}
+
+impl FoundationsSpanContext {
+    fn current_span_inner(&self) -> Option<SpanId> {
         // Cheap thread-local read; bails on the no-span and inactive cases.
         if !span_is_sampled() {
             return None;
@@ -93,9 +152,5 @@ impl SpanContext for FoundationsSpanContext {
             .entry(span_id)
             .or_insert(SpanMetadata { name, parent });
         Some(span_id)
-    }
-
-    fn metadata(&self, span: SpanId) -> Option<SpanMetadata> {
-        self.by_id.read().get(&span).cloned()
     }
 }

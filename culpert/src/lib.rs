@@ -105,7 +105,7 @@ pub use aggregator::{Frame, Profile, ProfileEntry};
 pub use allocator::TrackingAllocator;
 pub use config::Config;
 pub use culpert_macros::span_fn;
-pub use global::{install, snapshot};
+pub use global::{install, shutdown, snapshot};
 pub use mock::{MockSpanContext, MockSpanGuard};
 pub use scope::{LocalSpanContext, Scope};
 pub use span::{SpanContext, SpanId, SpanMetadata};

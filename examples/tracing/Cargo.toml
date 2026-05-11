@@ -1,0 +1,17 @@
+[package]
+name = "example-tracing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Minimal culpert + culpert-tracing wiring example."
+
+[[bin]]
+name = "example-tracing"
+path = "src/main.rs"
+
+[dependencies]
+culpert = { workspace = true }
+culpert-tracing = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

@@ -1,0 +1,17 @@
+[package]
+name = "example-foundations"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Minimal culpert + culpert-foundations wiring example (no HTTP server)."
+
+[[bin]]
+name = "example-foundations"
+path = "src/main.rs"
+
+[dependencies]
+culpert = { workspace = true }
+culpert-foundations = { workspace = true }
+foundations = { workspace = true }
+tokio = { workspace = true }

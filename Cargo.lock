@@ -694,6 +694,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "example-foundations"
+version = "0.0.1"
+dependencies = [
+ "culpert",
+ "culpert-foundations",
+ "foundations",
+ "tokio",
+]
+
+[[package]]
+name = "example-macros"
+version = "0.0.1"
+dependencies = [
+ "culpert",
+]
+
+[[package]]
+name = "example-tracing"
+version = "0.0.1"
+dependencies = [
+ "culpert",
+ "culpert-tracing",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"

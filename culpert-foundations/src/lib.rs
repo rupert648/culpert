@@ -57,7 +57,14 @@ pub fn install() {
 
 /// As [`install`], but with a caller-supplied [`Config`] (e.g. a tighter
 /// sample rate or a smaller stack-capture depth).
+///
+/// Installs a panic-hook filter so the foundations-internal re-entrancy
+/// panics our `current_span` defends against don't print noisy
+/// backtraces on stderr. The filter delegates to the previous hook for
+/// any other panic. See `context::install_panic_hook_filter` for the
+/// details.
 #[track_caller]
 pub fn install_with_config(config: Config) {
+    context::install_panic_hook_filter();
     culpert::install(FoundationsSpanContext::new(), config);
 }

@@ -7,6 +7,9 @@ members = [
     "culpert-macros",
     "culpert-cli",
     "examples/mock-axum",
+    "examples/foundations",
+    "examples/tracing",
+    "examples/macros",
     "spike",
 ]
 
