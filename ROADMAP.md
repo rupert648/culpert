@@ -140,15 +140,23 @@ limits" #2.
 1. ~~**Span hierarchy** (Tier 1 #2)~~ — **shipped.**
 2. ~~**`culpert diff`** (Tier 1 #1)~~ — **shipped (flat).** Hierarchical
    diff stays a polish item.
-3. **Frame-pointer capture** (Tier 2 #4) — next. Removes the loudest
-   production complaint; visible in the README's overhead numbers.
-4. **`tracing` adapter** (Tier 1 #3) — broadens beyond foundations.
-5. Then opportunistically: geometric sampling, metadata eviction,
+3. **`tracing` adapter** (Tier 1 #3) — **next session.** Broadens
+   culpert beyond foundations. New `culpert-tracing` crate following the
+   same shape as `culpert-foundations`.
+4. **Sampling-independent attribution** (Tier 2 #6) — **also next
+   session, after tracing adapter.** Ship a `#[culpert::span_fn]` macro
+   so allocation attribution stops being gated on foundations' trace
+   sampling rate.
+5. **Frame-pointer capture** (Tier 2 #4) — deferred. Drops the loudest
+   production overhead complaint but doesn't add new capability.
+6. Then opportunistically: geometric sampling, metadata eviction,
    hierarchical diff polish, JSON diff output.
 
 Hierarchy + diff together is what makes v0.2 a real second release —
-that core is now in. Tier 2 / 3 items are improvements rather than
-new capabilities.
+that core is now in. The next two items (tracing adapter + culpert
+span_fn) broaden culpert's reach: the first opens it beyond
+foundations, the second decouples attribution quality from trace
+sampling.
 
 ---
 
