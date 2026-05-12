@@ -4,34 +4,64 @@
 //! comes from culpert's own thread-local scope stack, which means it
 //! works regardless of any trace-sampling rate.
 //!
-//! Run it:
+//! Also doubles as a frame-pointer-vs-backtrace demo. Set
+//! `CULPERT_FP=1` to opt into `StackCaptureStrategy::FramePointer`;
+//! leave it unset (or `=0`) to use the default `Backtrace` strategy.
+//! The example times the work loop so you can compare the two side by
+//! side:
 //!
 //! ```sh
-//! cargo run -p example-macros
-//! # writes /tmp/example-macros.pb.gz
+//! cargo run --release -p example-macros            # backtrace
+//! CULPERT_FP=1 cargo run --release -p example-macros  # frame pointer
+//! ```
+//!
+//! Then inspect the profile:
+//!
+//! ```sh
 //! cargo run -p culpert-cli --bin culpert -- report /tmp/example-macros.pb.gz
 //! ```
 
-use culpert::{Config, LocalSpanContext, TrackingAllocator};
+use culpert::{Config, LocalSpanContext, StackCaptureStrategy, TrackingAllocator};
 use std::alloc::System;
+use std::time::Instant;
 
 #[global_allocator]
 static GLOBAL: TrackingAllocator<System> = TrackingAllocator::new(System);
 
+// Bigger iteration count so the BT-vs-FP timing difference is visible
+// over the noise of release builds. With 1-in-4 KiB sampling, the heavy
+// route below samples on roughly every iteration.
+const ITERS: usize = 2000;
+
 fn main() {
+    let use_fp = std::env::var("CULPERT_FP").is_ok_and(|v| v != "0");
+    let strategy = if use_fp {
+        StackCaptureStrategy::FramePointer
+    } else {
+        StackCaptureStrategy::Backtrace
+    };
+    eprintln!("stack capture strategy: {strategy:?} (toggle via CULPERT_FP=1)");
+
     culpert::install(
         LocalSpanContext::new(),
         Config {
             rate_bytes: 4 * 1024,
             stack_depth: 32,
             buffer_capacity: 1 << 16,
-            ..Default::default()
+            stack_capture_strategy: strategy,
         },
     );
 
-    for _ in 0..20 {
+    let start = Instant::now();
+    for _ in 0..ITERS {
         handle_request();
     }
+    let elapsed = start.elapsed();
+    let per_iter = elapsed / ITERS as u32;
+    eprintln!(
+        "ran {} iterations of handle_request in {:.2?} ({:.2?}/iter)",
+        ITERS, elapsed, per_iter,
+    );
 
     let profile = culpert::snapshot();
     let bytes = culpert::pprof::encode_gzipped(&profile).expect("gzip pprof");

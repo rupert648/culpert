@@ -126,4 +126,13 @@ fn end_to_end_attribution_through_tracing() {
         "hierarchy: parent={:?} child={:?} child.parent={:?}",
         parent_id, child_id, child_meta.parent
     );
+
+    // On macOS, the C-runtime atexit handler that flips culpert's
+    // shutting-down flag runs AFTER dyld4's TLS finalizers — so by the
+    // time `ThreadHandle::drop` runs on this thread, observe() is still
+    // active. Combined with tracing-subscriber's sharded_slab TLS
+    // destructors (which allocate during their drop), this can wedge
+    // the test on exit. Mirror the example binaries: explicit shutdown
+    // before returning makes the teardown deterministic.
+    culpert::shutdown();
 }

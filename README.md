@@ -236,7 +236,7 @@ pprof -http=:8090  /tmp/mock-axum.pb.gz   # interactive flame graph + source vie
 | Platform | any | Linux only | Linux only | any | Linux | Linux |
 | Output | pprof | pprof | pprof | dhat-format | bytehound-format | heaptrack-format |
 | Sampling | yes (~512 KiB) | yes (jemalloc) | yes | full-fidelity | full-fidelity | full-fidelity |
-| Overhead (typical service) | ~0% off, ~24% on | low | low | extreme | high | high |
+| Overhead (typical service) | ~0% off, ~0–5% on | low | low | extreme | high | high |
 | Pre-existing instrumentation needed | `#[span_fn]` | none | none | none | none | none |
 
 The comparison column that matters: **only culpert produces a profile that
@@ -251,13 +251,12 @@ if you want both.
 What culpert currently does **not** do:
 
 - **Low-overhead full-fidelity profiling.** Sampled is the only mode.
-  Workloads that allocate heavily and do nothing else see significant
-  overhead because each sampled allocation triggers `backtrace::trace`.
-  Realistic services with CPU work between allocations see ~+24 % at
-  the default 1-in-512 KiB rate. See
-  [`plan.md` § Phase 6](plan.md#phase-6--overhead-benchmarks--polish-3-days--shipped);
-  frame-pointer-based stack capture is queued for v0.2.x to bring this
-  closer to ~+5 %.
+  Workloads that allocate heavily and do nothing else see meaningful
+  per-alloc cost from the stack-capture path; realistic services
+  with CPU work between allocations see negligible overhead at the
+  default 1-in-512 KiB rate (samples are rare relative to surrounding
+  work). Opt in to `StackCaptureStrategy::FramePointer` to drop the
+  alloc-heavy overhead by ~91× — see the **Overhead** section.
 - **Async `#[culpert::span_fn]`.** v0.2 ships sync support; the macro
   emits a compile error on `async fn` with a pointer at the alternative
   (use the foundations or tracing adapters for async paths). A
@@ -284,23 +283,53 @@ What culpert currently does **not** do:
 
 ## Overhead
 
-Measured with Criterion on Apple M-series, release builds. Three modes:
-*baseline* (System global allocator), *tracking_off* (TrackingAllocator,
-no profiler installed), *tracking_on* (TrackingAllocator + installed
-profiler at default 1-in-512 KiB).
+Measured with Criterion on Apple M-series, release builds. Four
+configurations: *baseline* (System global allocator), *tracking_off*
+(TrackingAllocator, no profiler installed), *tracking_on (BT)*
+(TrackingAllocator + installed profiler at default 1-in-512 KiB using
+the default `Backtrace` strategy), and *tracking_on (FP)* using
+`StackCaptureStrategy::FramePointer`.
 
-| Workload                     | baseline | tracking_off | tracking_on | off Δ | on Δ |
-|------------------------------|----------|--------------|-------------|-------|------|
-| 200 × (alloc + ~1 µs CPU)    | 18.3 µs  | 16.1 µs      | 22.6 µs     | ~0 %  | +24 % |
-| 200 × 64 B allocs (small)    | 2.55 µs  | 2.89 µs      | 3.79 µs     | +13 % | +49 % |
-| 50 × 1 MiB allocs            | 26.2 µs  | 26.4 µs      | 549 µs      | +0.7 %| +1995 % |
+| Workload                     | baseline | tracking_off | tracking_on (BT) | tracking_on (FP) |
+|------------------------------|----------|--------------|------------------|------------------|
+| 200 × (alloc + ~1 µs CPU)    | 19.2 µs  | 17.8 µs      | 18.8 µs          | 17.9 µs          |
+| 200 × 64 B allocs (small)    | 3.44 µs  | 4.12 µs      | 3.76 µs          | 3.45 µs          |
+| 50 × 1 MiB allocs            | 5.06 µs  | 4.30 µs      | 584 µs           | 6.41 µs          |
 
 The first row is the realistic case (allocation interleaved with real
 work); the others are pure-alloc microbenches that emphasise the per-alloc
-overhead. `tracking_off` adds ~10–20 ns per alloc which disappears under
-any meaningful CPU work between allocations. `tracking_on` is dominated by
-`backtrace::trace` per sampled alloc — frame-pointer-based capture is on
-the v0.2 list.
+overhead.
+
+`tracking_off` adds tens of ns per alloc which disappears under any
+meaningful CPU work between allocations.
+
+`tracking_on (BT)` is dominated by `backtrace::trace` per sampled alloc.
+On the realistic workload most iterations have no samples (only ~1 in
+~10 iterations crosses 512 KiB), so the cost is in the noise. On the
+`50 × 1 MiB` microbench every allocation samples, so each iteration pays
+100 backtrace walks — at ~5 µs each on macOS's libunwind that's 500 µs
+per iteration, which is what dominates.
+
+`tracking_on (FP)` opts in to `StackCaptureStrategy::FramePointer` —
+a tiny load-and-cmp loop over the frame-pointer chain — and brings the
+dense-sampling case from 584 µs to 6.4 µs (~91× faster). On the
+realistic workload the difference is within measurement noise because
+samples are rare relative to the surrounding CPU work.
+
+```rust
+culpert::install(ctx, Config {
+    stack_capture_strategy: StackCaptureStrategy::FramePointer,
+    ..Default::default()
+});
+```
+
+Frame-pointer capture is x86_64 / aarch64 only; other targets fall back
+to `Backtrace` transparently. Requires
+`RUSTFLAGS="-C force-frame-pointers=yes"` on Linux x86_64 release
+builds; macOS aarch64 has frame pointers on by default. On Linux
+x86_64 without compiled-in frame pointers, `backtrace::trace` uses
+DWARF unwinding (slow); FP is expected to be a major win across all
+workloads on that platform, though we haven't measured it here.
 
 ## Examples
 
@@ -312,7 +341,7 @@ integration path:
 | [`mock-axum`](examples/mock-axum) | foundations + axum service with `/debug/alloc/profile` HTTP endpoint, plus a load script | `foundations::telemetry::init` + `culpert_foundations::pprof_route` + `#[foundations::span_fn]` |
 | [`foundations`](examples/foundations) | minimal foundations wiring without an HTTP server — just init, work, snapshot, write | `culpert_foundations::install` + `#[foundations::span_fn]` |
 | [`tracing`](examples/tracing) | `tracing` crate integration via `tracing_subscriber::Layer` | `culpert_tracing::layer()` composed into a Registry + `#[tracing::instrument]` |
-| [`macros`](examples/macros) | sampling-independent attribution with no external tracer | `culpert::LocalSpanContext` + `#[culpert::span_fn]` |
+| [`macros`](examples/macros) | sampling-independent attribution with no external tracer; also doubles as a BT-vs-FP timing demo (set `CULPERT_FP=1`) | `culpert::LocalSpanContext` + `#[culpert::span_fn]` |
 
 Each prints a profile to `/tmp/example-*.pb.gz`. View with
 `cargo run -p culpert-cli --bin culpert -- report <path>` or `pprof -tags <path>`.

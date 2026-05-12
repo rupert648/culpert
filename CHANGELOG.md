@@ -66,6 +66,22 @@ to crates.io. Until then, depend on this project from a git URL.
     with a pointer to the foundations / tracing adapters; a `ScopedFuture`
     wrapper for clean async parent semantics is a v0.2.x follow-up.
 
+- **Frame-pointer stack capture.** New `Config::stack_capture_strategy`
+  field (`StackCaptureStrategy::{Backtrace, FramePointer}`); default
+  stays `Backtrace` for compatibility. `FramePointer` swaps
+  `backtrace::trace` for a tiny load-and-cmp loop over the frame-pointer
+  chain — `mov` from `rbp` (x86_64) / `x29` (aarch64), bounds-check each
+  frame against the current `rsp` / `sp` plus a 16 MiB heuristic, walk
+  until either a null FP, a non-monotonic FP, or the configured stack
+  depth is reached. Dropped the dominant sampling cost from `backtrace::trace`
+  (~5 µs on macOS libunwind) to ~50 ns per walk on the same workload —
+  see the **Overhead** section of the README for numbers (91× speedup on
+  the dense-sampling microbench; in the noise on realistic alloc + CPU
+  workloads where samples are rare). x86_64 + aarch64 only; other targets
+  transparently fall back to `Backtrace`. Requires
+  `RUSTFLAGS="-C force-frame-pointers=yes"` on Linux x86_64 release
+  builds; macOS aarch64 has frame pointers on by default.
+
 ### Added in v0.1
 
 #### `culpert` (core)

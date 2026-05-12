@@ -78,17 +78,40 @@ blueprint.
 
 ### Tier 2 — performance & correctness
 
-#### 4. Frame-pointer-based stack capture
+#### 4. Frame-pointer-based stack capture — **shipped**
 
-Replace `backtrace::trace` (the dominant cost of profiling-on overhead
-per [`plan.md`](plan.md) § Phase 6) with a tiny `mov`+`cmp` loop walking
-frame pointers on x86_64 / aarch64. Plan-noted target: realistic-workload
-overhead drops from +24 % to roughly +5 %. Gated on
-`RUSTFLAGS="-C force-frame-pointers=yes"` (already standard for production
-Rust binaries).
+New `Config::stack_capture_strategy` field selects between
+`StackCaptureStrategy::Backtrace` (the default — `backtrace::trace`)
+and `StackCaptureStrategy::FramePointer` (a tiny `mov`+`cmp` loop over
+the frame-pointer chain on x86_64 / aarch64; other targets fall back
+to `Backtrace`).
 
-**Where it lives today:** noted as a v0.2 mitigation in `plan.md`
-§ Phase 6, alluded to in `README.md` overhead section.
+What landed:
+
+- `culpert::stack_capture::capture(strategy, depth) -> SmallVec<[usize; 32]>`
+  with the FP walk dispatched via `std::cfg_select!` on `target_arch`.
+- Inline asm reads `rbp` / `x29` with `nomem, nostack, preserves_flags`.
+- Bounds check `[sp, sp + 16 MiB)` plus strict-monotonic-increase
+  termination keeps the walk safe even when frame pointers aren't
+  guaranteed; worst case it returns early.
+- New `tracking_on_fp` Criterion bench mirrors `tracking_on` for direct
+  comparison.
+
+Measured on Apple M-series: 91× faster on the dense-sampling microbench
+(584 µs → 6.4 µs); within measurement noise on realistic alloc + CPU
+workloads where samples are rare. Linux x86_64 without compiled-in
+frame pointers (`RUSTFLAGS="-C force-frame-pointers=yes"`) falls back to
+DWARF-based backtrace; FP is expected to be a major win there but
+isn't measured in this repo.
+
+Default remains `Backtrace` for compatibility. Opt in:
+
+```rust
+culpert::install(ctx, Config {
+    stack_capture_strategy: StackCaptureStrategy::FramePointer,
+    ..Default::default()
+});
+```
 
 #### 5. Geometric sampling
 
@@ -145,14 +168,16 @@ without subtle parent-resolution surprises).
 3. ~~**`tracing` adapter** (Tier 1 #3)~~ — **shipped.**
 4. ~~**Sampling-independent attribution** (Tier 2 #6)~~ — **shipped (sync).**
    Async support via `ScopedFuture` is a v0.2.x follow-up.
-5. **Frame-pointer capture** (Tier 2 #4) — next. Drops the loudest
-   production overhead complaint.
-6. Then opportunistically: geometric sampling, metadata eviction,
-   hierarchical diff polish, JSON diff output, async `#[culpert::span_fn]`.
+5. ~~**Frame-pointer capture** (Tier 2 #4)~~ — **shipped.** Default is
+   still `Backtrace`; opt in via `Config::stack_capture_strategy`.
+6. **Geometric sampling** (Tier 2 #5) — next. Cleaner statistics +
+   drops the `est_bytes` bias-correction column from the CLI.
+7. Then opportunistically: metadata eviction, hierarchical diff polish,
+   JSON diff output, async `#[culpert::span_fn]`.
 
 The v0.2 marquee is in: hierarchy, diff, broader-ecosystem reach
-(`tracing`), and sampling-independent attribution. Remaining items are
-overhead reduction and polish.
+(`tracing`), sampling-independent attribution, and FP-based capture.
+Remaining items are correctness (geometric sampling) and polish.
 
 ---
 

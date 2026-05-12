@@ -391,6 +391,13 @@ x86_64/aarch64), inline-able reentrancy gate. The current
 implementation accepts the cost in exchange for portability and
 robustness.
 
+**Update (v0.2):** frame-pointer capture shipped as an opt-in
+`StackCaptureStrategy::FramePointer` strategy. Default remains
+`Backtrace`. Measured 91× speedup on the `50 × 1 MiB allocs`
+microbench (584 µs → 6.4 µs on macOS aarch64). See
+[`ROADMAP.md`](ROADMAP.md) § Tier 2 #4 and [`README.md`](README.md)
+§ Overhead.
+
 ### Phase 7 — docs + release (~2 days)
 
 - README quickstart against mock-axum.
