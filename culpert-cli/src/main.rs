@@ -379,16 +379,25 @@ fn aggregate_by_span(profile: &proto::Profile) -> Vec<SpanRow> {
 
     let mut by_name: HashMap<String, SpanRow> = HashMap::new();
     for sample in &profile.sample {
+        let count = sample.value.first().copied().unwrap_or(0).max(0) as u64;
+        // Bernstein-corrected bytes arrive in sample.value[1] from the
+        // aggregator under geometric sampling. No further correction needed.
+        let bytes = sample.value.get(1).copied().unwrap_or(0).max(0) as u64;
+
+        // Encoder emits zero-value synthetic samples for parent spans with
+        // no direct ProfileEntry of their own (so the tree builder can
+        // resolve their names). Real samples always have count >= 1; skip
+        // synthetics so they don't show up as 0-byte rows in the flat
+        // top-spans table.
+        if count == 0 && bytes == 0 {
+            continue;
+        }
+
         let name = span_name_key
             .and_then(|k| sample.label.iter().find(|l| l.key == k))
             .and_then(|label| profile.string_table.get(label.str as usize))
             .cloned()
             .unwrap_or_else(|| "(no span)".to_string());
-
-        let count = sample.value.first().copied().unwrap_or(0).max(0) as u64;
-        // Bernstein-corrected bytes arrive in sample.value[1] from the
-        // aggregator under geometric sampling. No further correction needed.
-        let bytes = sample.value.get(1).copied().unwrap_or(0).max(0) as u64;
 
         let row = by_name.entry(name.clone()).or_insert(SpanRow {
             name,
@@ -534,6 +543,11 @@ fn aggregate_callsites(profile: &proto::Profile, filter: &Filter) -> Vec<Callsit
         // aggregator under geometric sampling. No further correction
         // needed here.
         let bytes = sample.value.get(1).copied().unwrap_or(0).max(0) as u64;
+
+        // Skip synthetic parent-span samples (see aggregate_by_span).
+        if count == 0 && bytes == 0 {
+            continue;
+        }
 
         let callsite_label = format_leaf_callsite(sample, profile, &location_by_id, &function_by_id);
 
