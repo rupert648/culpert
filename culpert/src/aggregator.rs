@@ -28,10 +28,19 @@ pub struct ProfileEntry {
     pub span: Option<SpanId>,
     /// Resolved callsite, top-of-stack first.
     pub frames: Vec<Frame>,
-    /// Sum of `Layout::size()` across all samples in this bucket. This is
-    /// raw allocated bytes — not weighted by sample rate. Multiply by the
-    /// sample rate to get an unbiased estimate of total bytes (or use the
-    /// `bytes_total * rate_bytes` convention pprof exporters use).
+    /// Bernstein-weighted, **unbiased** estimate of total bytes allocated
+    /// in this `(span, callsite)` bucket.
+    ///
+    /// Each underlying sample contributes `bytes / (1 − exp(−bytes/rate_bytes))`,
+    /// the inverse of the per-alloc sampling probability. Across many
+    /// samples this sum converges to the true total bytes allocated;
+    /// for individual buckets the Monte-Carlo standard error scales as
+    /// `~sqrt(rate_bytes × bytes_total)`.
+    ///
+    /// (Pre-v0.2 versions of culpert exposed raw `Layout::size()` sums here
+    /// and required downstream tooling to apply a heuristic correction;
+    /// see [`crate::Config::rate_bytes`] and the v0.2 changelog entry on
+    /// geometric sampling for the full story.)
     pub bytes_total: u64,
     /// Number of samples in this bucket.
     pub samples: u64,
@@ -68,6 +77,10 @@ pub(crate) fn snapshot(config: &Config, ctx: &dyn SpanContext) -> Profile {
     // Bucket by (span, hash of frames). We keep raw IPs for the bucket key
     // and the canonical frame list, then resolve symbols once per bucket
     // at the end (resolution is by far the most expensive step).
+    //
+    // Each sample's contribution to the per-bucket `bytes_total` is the
+    // Bernstein-corrected weight, not the raw `Layout::size()`. See
+    // `bernstein_weight` below.
     let mut buckets: HashMap<(Option<SpanId>, u64), Bucket> = HashMap::new();
     for s in raw {
         let key = (s.span, hash_frames(&s.frames));
@@ -76,7 +89,9 @@ pub(crate) fn snapshot(config: &Config, ctx: &dyn SpanContext) -> Profile {
             bytes_total: 0,
             samples: 0,
         });
-        entry.bytes_total = entry.bytes_total.saturating_add(s.bytes);
+        entry.bytes_total = entry
+            .bytes_total
+            .saturating_add(bernstein_weight(s.bytes, config.rate_bytes));
         entry.samples = entry.samples.saturating_add(1);
     }
 
@@ -154,6 +169,35 @@ fn hash_frames(frames: &[usize]) -> u64 {
         h = h.wrapping_mul(0x100000001b3);
     }
     h
+}
+
+/// Bernstein correction for geometric sampling.
+///
+/// Under geometric sampling, an allocation of `bytes` bytes is observed with
+/// probability `p = 1 − exp(−bytes/rate)` (the chance that at least one
+/// sample point falls within the alloc). Weighting each observed sample by
+/// `1/p` yields an unbiased estimator of total bytes allocated:
+///
+/// ```text
+/// E[weight | sampled] · P(sampled) = bytes/p · p = bytes
+/// ```
+///
+/// For `bytes >> rate` (alloc guaranteed sampled) this reduces to `bytes`.
+/// For `bytes << rate` it inflates to ~`rate`, statistically representing
+/// the many similar small allocs that *weren't* sampled.
+///
+/// `rate == 0` falls back to raw bytes (sampling disabled, no correction
+/// needed). Numerical underflow on absurdly small allocs falls back to raw
+/// bytes too — the under-attribution is bounded by `f64::EPSILON · bytes`,
+/// well below any meaningful resolution.
+fn bernstein_weight(bytes: u64, rate: u64) -> u64 {
+    if rate == 0 {
+        return bytes;
+    }
+    let b = bytes as f64;
+    let r = rate as f64;
+    let p_sampled = 1.0 - (-b / r).exp();
+    (b / p_sampled.max(f64::EPSILON)) as u64
 }
 
 fn resolve_frames(ips: &[usize]) -> Vec<Frame> {

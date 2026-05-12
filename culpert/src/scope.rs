@@ -71,6 +71,16 @@ impl Drop for Scope {
 /// `name` is `&'static str` so we can pin it into the metadata cache
 /// without an extra allocation per call.
 pub fn enter(name: &'static str) -> Scope {
+    // Suppress sampling for the duration of our own bookkeeping —
+    // `name.to_string()`, the METADATA HashMap insert (which may
+    // `reserve_rehash`), and the STACK Vec push (which may grow). Without
+    // this guard those allocations get attributed to whatever scope is
+    // currently on top of the stack (i.e. the PARENT of the scope we're
+    // about to enter), polluting its self-time with culpert's own setup
+    // cost — typically showing as `hashbrown::raw::RawTable::reserve_rehash`
+    // hanging off a user-visible span name. See `sampler::enter_reentry_zone`.
+    let _reentry = crate::sampler::enter_reentry_zone();
+
     // Mint a new id. Atomic-only, no allocation.
     let raw = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let id = NonZeroU64::new(raw).expect("NEXT_ID starts at 1, only increments");

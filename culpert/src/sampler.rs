@@ -93,12 +93,14 @@ fn do_observe(bytes: u64) {
         if st.bytes_until_next_sample > 0 {
             false
         } else {
-            // Rearm the countdown. We *add* rather than replace so a single huge
-            // alloc that overshoots by N rate intervals still only produces one
-            // sample. Acceptable bias at extreme alloc sizes for v0.1.
-            st.bytes_until_next_sample = st
-                .bytes_until_next_sample
-                .saturating_add(profiler.config.rate_bytes as i64);
+            // Go / jemalloc-style geometric sampling. RESET the counter to a
+            // fresh `Geometric(1/rate_bytes)` draw rather than carrying over
+            // negative debt from a huge alloc. A multi-rate alloc still fires
+            // exactly one sample for *this* alloc; the Bernstein correction
+            // in the aggregator (`bytes / (1 − exp(−bytes/rate))`) unbiases
+            // its contribution to the per-span total at read time.
+            st.bytes_until_next_sample =
+                crate::rng::geometric_interval(profiler.config.rate_bytes) as i64;
             true
         }
     };

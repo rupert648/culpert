@@ -69,6 +69,7 @@ pub mod stack_capture;
 mod aggregator;
 mod allocator;
 mod global;
+mod rng;
 mod sample;
 mod sampler;
 mod thread_state;

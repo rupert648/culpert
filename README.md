@@ -5,8 +5,10 @@
 A `#[global_allocator]` wrapper that attributes every sampled allocation to
 the **span** it happened inside, exports pprof-format profiles so the
 existing tool ecosystem (stock `pprof`, Speedscope, Pyroscope, Polar Signals)
-keeps working, and ships a CLI with bias-corrected reports plus a `diff`
-subcommand for CI/PR workflows.
+keeps working, and ships a CLI with unbiased per-span reports plus a `diff`
+subcommand for CI/PR workflows. Geometric sampling with the Bernstein
+correction means `bytes` figures are directly meaningful — no separate
+"raw vs estimated" columns to interpret.
 
 Three integration paths — pick whichever matches your service:
 
@@ -144,8 +146,9 @@ parent. Built from `span_parent_id` labels emitted by whichever
 $ culpert report /tmp/mock-axum.pb.gz
 
 Hierarchical span report (143179 samples, sample rate 4.00 KB/alloc):
-  Tree shows span_name groupings under their parents. Values are
-  bias-corrected estimates. Use --flat for a simple sorted table.
+  Tree shows span_name groupings under their parents. `bytes` is the
+  Bernstein-corrected, unbiased estimate of allocated bytes (see
+  CHANGELOG: geometric sampling). Use --flat for a simple sorted table.
 
 vec                                            1.30 GB   70.48%  (self 1.30 GB)
 (no span)                                    246.45 MB   13.07%  (self 246.45 MB)
@@ -157,10 +160,12 @@ nested                                         3.55 MB    0.19%  (self 170.62 KB
 strings                                        5.87 MB    0.31%  (self 5.87 MB)
 ```
 
-`--flat` switches to the previous sorted-by-bytes table for users who
-prefer it. `raw_bytes` is the sum of `Layout::size()` over sampled
-allocations (what stock pprof shows). `est_bytes` is the bias-corrected
-estimate — every sample below the sample rate counts as `rate_bytes`.
+`--flat` switches to a sorted-by-bytes table for users who prefer it.
+The `bytes` column is the unbiased estimate of total bytes allocated
+under each span — each underlying sample is weighted by
+`1 / (1 − exp(−bytes/rate))` (the Bernstein correction for geometric
+sampling). No raw column is shown: with geometric sampling the
+corrected value is the only one that means anything meaningful.
 
 ### Drill into one span — `--span <name>`
 
@@ -168,10 +173,10 @@ estimate — every sample below the sample rate counts as `rate_bytes`.
 $ culpert report /tmp/mock-axum.pb.gz --span json --top 4
 
 Top callsites within span "json" (sample rate 4.00 KB/alloc):
-  callsite                                                  samples    raw_bytes    est_bytes
-  -------------------------------------------------------  --------  -----------  -----------
-  alloc::vec::Vec::from_iter::SpecFromIter                   23000      2.81 MB    89.84 MB
-  alloc::fmt::format::{closure}                              23000    314.45 KB    89.84 MB
+  callsite                                                  samples         bytes  bytes %
+  -------------------------------------------------------  --------  ------------  -------
+  alloc::vec::Vec::from_iter::SpecFromIter                   23000      89.84 MB   50.00%
+  alloc::fmt::format::{closure}                              23000      89.84 MB   50.00%
 ```
 
 ### Drill into the unattributed bucket — `--no-span`
@@ -185,12 +190,12 @@ code paths you haven't yet annotated.
 $ culpert report /tmp/mock-axum.pb.gz --no-span --top 4
 
 Top callsites in unattributed samples — outside any span:
-  callsite                                                  samples    raw_bytes    est_bytes
-  -------------------------------------------------------  --------  -----------  -----------
-  cf_rustracing_jaeger::Tag as Clone>::clone                  8720    90.48 KB    34.06 MB
-  alloc::vec::Vec::append_elements                            6678   306.56 KB    26.09 MB
-  alloc::boxed::Box::new_uninit                               6551   921.23 KB    25.59 MB
-  bytes::bytes_mut::BytesMut::reserve_inner                   2307    14.42 MB    16.00 MB
+  callsite                                                  samples         bytes  bytes %
+  -------------------------------------------------------  --------  ------------  -------
+  cf_rustracing_jaeger::Tag as Clone>::clone                  8720      34.06 MB   33.74%
+  alloc::vec::Vec::append_elements                            6678      26.09 MB   25.84%
+  alloc::boxed::Box::new_uninit                               6551      25.59 MB   25.34%
+  bytes::bytes_mut::BytesMut::reserve_inner                   2307      16.00 MB   15.85%
 ```
 
 ### Compare two profiles — `culpert diff`
@@ -273,14 +278,6 @@ What culpert currently does **not** do:
   product; use [`pprof-rs`](https://crates.io/crates/pprof) /
   [`samply`](https://github.com/mstange/samply) for CPU, jemalloc's
   stats for fragmentation.
-- **Auto-resolve transitive parent names in the CLI tree.** When a
-  parent span has no direct samples of its own (e.g. a `handle_request`
-  body that just orchestrates sub-spans), its sub-spans currently appear
-  twice — once nested under the sampled parent instances, once at root.
-  The aggregator already walks parent chains transitively for
-  `Profile.spans`; the encoder needs to emit a `span_parent_name`
-  label so the CLI can resolve cleanly. Polish work queued for v0.2.x.
-
 ## Overhead
 
 Measured with Criterion on Apple M-series, release builds. Four

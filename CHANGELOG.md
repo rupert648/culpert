@@ -66,6 +66,31 @@ to crates.io. Until then, depend on this project from a git URL.
     with a pointer to the foundations / tracing adapters; a `ScopedFuture`
     wrapper for clean async parent semantics is a v0.2.x follow-up.
 
+- **Geometric sampling + Bernstein-unbiased per-span totals.** Replaces
+  the v0.1 deterministic counter-mod rearm (`+= rate_bytes`) with a
+  fresh `Geometric(1/rate_bytes)` draw (Go / jemalloc-style — reset, no
+  debt carry-over). The aggregator now applies the standard Bernstein
+  correction `bytes / (1 − exp(−bytes/rate))` per sample when computing
+  `ProfileEntry::bytes_total`, so the value in the encoded pprof is
+  itself an unbiased estimator of total bytes allocated for that
+  `(span, callsite)` bucket.
+
+  Visible knock-on changes:
+  - `culpert report` drops the three-column `raw_bytes / samples /
+    est_bytes` layout in favour of two columns (`samples / bytes`).
+    `bytes` is the unbiased estimate; no read-time correction needed.
+  - `culpert diff` compares span totals directly without any
+    correction logic of its own.
+  - One `f64::ln` per fired sample on the slow path (~tens of ns —
+    negligible vs stack capture cost). Hot-path cost unchanged.
+
+  New `fastrand = "2.4.1"` workspace dep (zero transitive deps). New
+  internal `culpert::rng::geometric_interval(rate_bytes)` helper. New
+  integration test `culpert/tests/geometric_sampling.rs` runs a known
+  workload across 30 trials and asserts the mean estimate is within
+  5% of true total (Monte-Carlo bound is ~0.1%; the wide tolerance
+  catches only systematic regressions).
+
 - **Frame-pointer stack capture.** New `Config::stack_capture_strategy`
   field (`StackCaptureStrategy::{Backtrace, FramePointer}`); default
   stays `Backtrace` for compatibility. `FramePointer` swaps

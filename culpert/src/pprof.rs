@@ -33,6 +33,7 @@
 //! job of the `culpert report` CLI; `span_parent_id` is what powers the
 //! tree view.
 
+use crate::span::SpanId;
 use crate::Profile;
 use prost::Message;
 use std::collections::HashMap;
@@ -393,6 +394,56 @@ fn build_proto(profile: &Profile) -> proto::Profile {
         samples.push(proto::Sample {
             location_id: location_ids,
             value: vec![entry.samples as i64, entry.bytes_total as i64],
+            label: labels,
+        });
+    }
+
+    // Synthetic samples for parent spans that have no direct samples of
+    // their own. Without these, the CLI's tree builder can't resolve the
+    // parent's name (its id-to-name map is built by scanning sample labels),
+    // so children appear as roots and the hierarchy is lost.
+    //
+    // Common case: a `handle_request` body that only orchestrates sub-spans
+    // (`parse_input`, `build_response`) — there are no direct allocations to
+    // tag `span_name = "handle_request"` on, but `parse_input`'s samples
+    // carry `span_parent_id = <handle_request id>`. The synthetic sample
+    // below carries `span_id` + `span_name` for the parent so the CLI can
+    // close the loop, with `value = [0, 0]` so it doesn't add to any
+    // aggregate.
+    let entry_span_ids: std::collections::HashSet<SpanId> = profile
+        .entries
+        .iter()
+        .filter_map(|e| e.span)
+        .collect();
+    for (&span_id, meta) in &profile.spans {
+        if entry_span_ids.contains(&span_id) {
+            continue;
+        }
+        let mut labels: Vec<proto::Label> = Vec::with_capacity(3);
+        labels.push(proto::Label {
+            key: span_id_key,
+            str: 0,
+            num: span_id.get() as i64,
+            num_unit: 0,
+        });
+        let name_idx = strs.intern(&meta.name);
+        labels.push(proto::Label {
+            key: span_name_key,
+            str: name_idx,
+            num: 0,
+            num_unit: 0,
+        });
+        if let Some(parent_id) = meta.parent {
+            labels.push(proto::Label {
+                key: span_parent_id_key,
+                str: 0,
+                num: parent_id.get() as i64,
+                num_unit: 0,
+            });
+        }
+        samples.push(proto::Sample {
+            location_id: vec![],
+            value: vec![0, 0],
             label: labels,
         });
     }

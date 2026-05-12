@@ -113,19 +113,36 @@ culpert::install(ctx, Config {
 });
 ```
 
-#### 5. Geometric sampling
+#### 5. Geometric sampling — **shipped**
 
-Replace the current counter-mod sampler with `next_sample_interval ~
-Geometric(1/rate)` so each *byte* has independent 1/rate probability of
-being sampled. Then `bytes_total` IS the unbiased estimate by
-construction — the CLI's `estimated_bytes` correction goes away,
-`raw_bytes` becomes the only column users need. Cleaner stats and
-smaller mental model. Modest implementation cost (one `rand` call per
-sample on the slow path).
+Replaces the v0.1 deterministic counter-mod rearm with a fresh
+`Geometric(1/rate_bytes)` draw on each sample (Go / jemalloc-style —
+reset, no debt carry-over). The aggregator applies the Bernstein
+correction `bytes / (1 − exp(−bytes/rate))` per sample when computing
+`ProfileEntry::bytes_total`, so the value in the encoded pprof is
+itself an unbiased estimator of total bytes allocated for that
+`(span, callsite)` bucket.
 
-**Where it lives today:** the bias-correction logic in
-`culpert-cli/src/main.rs` notes the trade-off in its doc-comment;
-`README.md` Phase 6 section mentions the bias indirectly.
+What landed:
+
+- New crate-private `culpert::rng::geometric_interval(rate_bytes)`
+  backed by `fastrand` (zero transitive deps, thread-local seeded from
+  OS entropy on first use → different sequence per run, per thread).
+- Sampler rearms via the geometric draw; thread state's first-sample
+  position also drawn from the same distribution (avoids biasing
+  short-lived threads).
+- Aggregator applies the Bernstein correction once when bucketing
+  raw samples into `ProfileEntry`s.
+- `culpert report` drops the three-column raw/samples/est layout in
+  favour of two columns (`samples / bytes`); `culpert diff` compares
+  `bytes_total` directly.
+- New integration test (`culpert/tests/geometric_sampling.rs`) runs
+  a known workload 30 times and asserts the mean estimate is within
+  5 % of true total (theoretical Monte-Carlo error ~0.1 %).
+
+Hot-path cost is unchanged (still one branch + one subtraction).
+Slow path adds one `f64::ln` per fired sample, on the order of tens
+of ns — negligible vs the stack-capture cost.
 
 #### 6. Sampling-independent attribution — **shipped (sync)**
 
@@ -170,14 +187,14 @@ without subtle parent-resolution surprises).
    Async support via `ScopedFuture` is a v0.2.x follow-up.
 5. ~~**Frame-pointer capture** (Tier 2 #4)~~ — **shipped.** Default is
    still `Backtrace`; opt in via `Config::stack_capture_strategy`.
-6. **Geometric sampling** (Tier 2 #5) — next. Cleaner statistics +
-   drops the `est_bytes` bias-correction column from the CLI.
+6. ~~**Geometric sampling** (Tier 2 #5)~~ — **shipped.** Bernstein-
+   corrected unbiased `bytes_total`; CLI dropped to two columns.
 7. Then opportunistically: metadata eviction, hierarchical diff polish,
    JSON diff output, async `#[culpert::span_fn]`.
 
-The v0.2 marquee is in: hierarchy, diff, broader-ecosystem reach
-(`tracing`), sampling-independent attribution, and FP-based capture.
-Remaining items are correctness (geometric sampling) and polish.
+The v0.2 marquee is fully in: hierarchy, diff, broader-ecosystem reach
+(`tracing`), sampling-independent attribution, FP-based capture, and
+unbiased geometric sampling. Remaining work is polish.
 
 ---
 

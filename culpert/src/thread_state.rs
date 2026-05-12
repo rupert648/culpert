@@ -37,7 +37,10 @@ pub(crate) struct ThreadState {
 impl ThreadState {
     fn new(config: &Config) -> Self {
         Self {
-            bytes_until_next_sample: config.rate_bytes as i64,
+            // First-sample position drawn from the same Geometric distribution
+            // as subsequent samples — otherwise short-lived threads that only
+            // allocate a bit before exiting are systematically biased against.
+            bytes_until_next_sample: crate::rng::geometric_interval(config.rate_bytes) as i64,
             samples: Vec::with_capacity(config.buffer_capacity),
             dropped_samples: 0,
             buffer_capacity: config.buffer_capacity,

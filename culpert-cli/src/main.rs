@@ -148,23 +148,23 @@ fn load(path: &PathBuf) -> Result<proto::Profile, Box<dyn std::error::Error>> {
 struct TreeNode {
     name: String,
     samples: u64,
-    estimated_bytes: u64,
+    bytes_total: u64,
     children: Vec<TreeNode>,
 }
 
 #[derive(Default)]
 struct Acc {
     samples: u64,
-    estimated_bytes: u64,
+    bytes_total: u64,
 }
 
 fn run_tree(path: &PathBuf, top: usize) -> Result<(), Box<dyn std::error::Error>> {
     let profile = load(path)?;
     let rate_bytes = profile.period.max(1) as u64;
-    let roots = build_tree(&profile, rate_bytes);
+    let roots = build_tree(&profile);
 
     let total_samples: u64 = roots.iter().map(subtree_samples).sum();
-    let total_est: u64 = roots.iter().map(subtree_estimated).sum();
+    let total_bytes: u64 = roots.iter().map(subtree_bytes).sum();
 
     println!(
         "Hierarchical span report ({} samples, sample rate {}/alloc):",
@@ -174,20 +174,21 @@ fn run_tree(path: &PathBuf, top: usize) -> Result<(), Box<dyn std::error::Error>
     println!(
         "  Tree shows span_name groupings under their parents (from\n  \
            `span_parent_id` labels emitted by whichever SpanContext was\n  \
-           installed). Values are bias-corrected estimates. Use --flat for\n  \
-           a simple sorted-by-bytes table without hierarchy."
+           installed). `bytes` is the Bernstein-corrected, unbiased\n  \
+           estimate of allocated bytes (see CHANGELOG: geometric sampling).\n  \
+           Use --flat for a simple sorted-by-bytes table without hierarchy."
     );
     println!();
 
     for (i, root) in roots.iter().enumerate() {
-        render_node(root, "", i + 1 == roots.len(), 0, top, total_est);
+        render_node(root, "", i + 1 == roots.len(), 0, top, total_bytes);
     }
     Ok(())
 }
 
-fn subtree_estimated(node: &TreeNode) -> u64 {
-    node.estimated_bytes
-        .saturating_add(node.children.iter().map(subtree_estimated).sum())
+fn subtree_bytes(node: &TreeNode) -> u64 {
+    node.bytes_total
+        .saturating_add(node.children.iter().map(subtree_bytes).sum())
 }
 
 fn subtree_samples(node: &TreeNode) -> u64 {
@@ -195,7 +196,7 @@ fn subtree_samples(node: &TreeNode) -> u64 {
         .saturating_add(node.children.iter().map(subtree_samples).sum())
 }
 
-fn build_tree(profile: &proto::Profile, rate_bytes: u64) -> Vec<TreeNode> {
+fn build_tree(profile: &proto::Profile) -> Vec<TreeNode> {
     let span_id_key = string_index(profile, "span_id");
     let span_name_key = string_index(profile, "span_name");
     let span_parent_id_key = string_index(profile, "span_parent_id");
@@ -226,17 +227,15 @@ fn build_tree(profile: &proto::Profile, rate_bytes: u64) -> Vec<TreeNode> {
             .and_then(|pid| id_to_name.get(&pid).cloned());
 
         let count = sample.value.first().copied().unwrap_or(0).max(0) as u64;
+        // `bytes` arrives Bernstein-corrected from the aggregator under
+        // geometric sampling (see culpert::aggregator). No further
+        // correction needed in the CLI — it's already the unbiased
+        // estimate of bytes allocated for this `(span, callsite)`.
         let bytes = sample.value.get(1).copied().unwrap_or(0).max(0) as u64;
-        let avg = bytes.checked_div(count).unwrap_or(0);
-        let estimated = if avg < rate_bytes {
-            count.saturating_mul(rate_bytes)
-        } else {
-            bytes
-        };
 
         let acc = by_pair.entry((parent_name, name)).or_default();
         acc.samples = acc.samples.saturating_add(count);
-        acc.estimated_bytes = acc.estimated_bytes.saturating_add(estimated);
+        acc.bytes_total = acc.bytes_total.saturating_add(bytes);
     }
 
     // Index by parent_name -> children
@@ -261,12 +260,12 @@ fn build_subtree(
         .map(|(name, acc)| TreeNode {
             name: name.clone(),
             samples: acc.samples,
-            estimated_bytes: acc.estimated_bytes,
+            bytes_total: acc.bytes_total,
             children: build_subtree(Some(name), by_parent),
         })
         .collect();
     // Sort by *subtree* total so the visual ordering matches dominance.
-    nodes.sort_by_key(|n| std::cmp::Reverse(subtree_estimated(n)));
+    nodes.sort_by_key(|n| std::cmp::Reverse(subtree_bytes(n)));
     nodes
 }
 
@@ -276,7 +275,7 @@ fn render_node(
     is_last: bool,
     depth: usize,
     top: usize,
-    total_est: u64,
+    total_bytes: u64,
 ) {
     let connector = if depth == 0 {
         ""
@@ -285,13 +284,13 @@ fn render_node(
     } else {
         "├─ "
     };
-    let subtree = subtree_estimated(node);
-    let pct = if total_est == 0 {
+    let subtree = subtree_bytes(node);
+    let pct = if total_bytes == 0 {
         0.0
     } else {
-        100.0 * subtree as f64 / total_est as f64
+        100.0 * subtree as f64 / total_bytes as f64
     };
-    let self_only = node.estimated_bytes;
+    let self_only = node.bytes_total;
     println!(
         "{prefix}{connector}{:<40}  {:>12}  {:>6.2}%  (self {})",
         node.name,
@@ -314,7 +313,7 @@ fn render_node(
             i + 1 == visible.len(),
             depth + 1,
             top,
-            total_est,
+            total_bytes,
         );
     }
     if node.children.len() > top {
@@ -346,20 +345,19 @@ fn label_str<'a>(
 struct SpanRow {
     name: String,
     samples: u64,
+    /// Bernstein-corrected, unbiased estimate of total bytes allocated under
+    /// this span (sum of per-sample weights, applied in the aggregator).
     bytes_total: u64,
-    /// Bias-corrected estimate. See module-level explanation.
-    estimated_bytes: u64,
 }
 
 fn run_top_spans(path: &PathBuf, top: usize) -> Result<(), Box<dyn std::error::Error>> {
     let profile = load(path)?;
     let rate_bytes = profile.period.max(1) as u64;
-    let mut rows = aggregate_by_span(&profile, rate_bytes);
+    let mut rows = aggregate_by_span(&profile);
 
-    rows.sort_by_key(|r| std::cmp::Reverse(r.estimated_bytes));
+    rows.sort_by_key(|r| std::cmp::Reverse(r.bytes_total));
 
     let total_bytes: u64 = rows.iter().map(|r| r.bytes_total).sum();
-    let total_estimated: u64 = rows.iter().map(|r| r.estimated_bytes).sum();
     let total_samples: u64 = rows.iter().map(|r| r.samples).sum();
 
     println!(
@@ -368,16 +366,15 @@ fn run_top_spans(path: &PathBuf, top: usize) -> Result<(), Box<dyn std::error::E
         format_bytes(rate_bytes)
     );
     println!(
-        "  raw_bytes        = sum of Layout::size() over sampled allocations.\n  \
-           estimated_bytes  = bias-corrected: each sample of size < rate counts for `rate`.\n  \
-           Use estimated_bytes for total-volume comparisons; raw_bytes is what stock pprof shows."
+        "  `bytes` is the Bernstein-corrected, unbiased estimate of total bytes\n  \
+           allocated under each span (see CHANGELOG: geometric sampling)."
     );
     println!();
-    print_span_table(&rows, total_bytes, total_estimated, top);
+    print_span_table(&rows, total_bytes, top);
     Ok(())
 }
 
-fn aggregate_by_span(profile: &proto::Profile, rate_bytes: u64) -> Vec<SpanRow> {
+fn aggregate_by_span(profile: &proto::Profile) -> Vec<SpanRow> {
     let span_name_key = string_index(profile, "span_name");
 
     let mut by_name: HashMap<String, SpanRow> = HashMap::new();
@@ -389,33 +386,23 @@ fn aggregate_by_span(profile: &proto::Profile, rate_bytes: u64) -> Vec<SpanRow> 
             .unwrap_or_else(|| "(no span)".to_string());
 
         let count = sample.value.first().copied().unwrap_or(0).max(0) as u64;
+        // Bernstein-corrected bytes arrive in sample.value[1] from the
+        // aggregator under geometric sampling. No further correction needed.
         let bytes = sample.value.get(1).copied().unwrap_or(0).max(0) as u64;
-
-        // Bias-corrected estimate per sample bucket.
-        // avg = bytes / count is the mean Layout::size() in this bucket.
-        // Each underlying alloc contributes max(avg, rate) to the unbiased total.
-        let avg = bytes.checked_div(count).unwrap_or(0);
-        let estimated = if avg < rate_bytes {
-            count.saturating_mul(rate_bytes)
-        } else {
-            bytes
-        };
 
         let row = by_name.entry(name.clone()).or_insert(SpanRow {
             name,
             samples: 0,
             bytes_total: 0,
-            estimated_bytes: 0,
         });
         row.samples = row.samples.saturating_add(count);
         row.bytes_total = row.bytes_total.saturating_add(bytes);
-        row.estimated_bytes = row.estimated_bytes.saturating_add(estimated);
     }
 
     by_name.into_values().collect()
 }
 
-fn print_span_table(rows: &[SpanRow], total_bytes: u64, total_estimated: u64, top: usize) {
+fn print_span_table(rows: &[SpanRow], total_bytes: u64, top: usize) {
     let name_w = rows
         .iter()
         .take(top)
@@ -425,23 +412,20 @@ fn print_span_table(rows: &[SpanRow], total_bytes: u64, total_estimated: u64, to
         .max(10);
 
     println!(
-        "  {:<name_w$}  {:>10}  {:>14}  {:>7}  {:>14}  {:>7}",
-        "span", "samples", "raw_bytes", "raw %", "est_bytes", "est %",
+        "  {:<name_w$}  {:>10}  {:>14}  {:>7}",
+        "span", "samples", "bytes", "bytes %",
         name_w = name_w
     );
-    println!("  {:-<name_w$}  {:->10}  {:->14}  {:->7}  {:->14}  {:->7}", "", "", "", "", "", "", name_w = name_w);
+    println!("  {:-<name_w$}  {:->10}  {:->14}  {:->7}", "", "", "", "", name_w = name_w);
 
     for row in rows.iter().take(top) {
-        let raw_pct = pct(row.bytes_total, total_bytes);
-        let est_pct = pct(row.estimated_bytes, total_estimated);
+        let bytes_pct = pct(row.bytes_total, total_bytes);
         println!(
-            "  {:<name_w$}  {:>10}  {:>14}  {:>6.2}%  {:>14}  {:>6.2}%",
+            "  {:<name_w$}  {:>10}  {:>14}  {:>6.2}%",
             row.name,
             row.samples,
             format_bytes(row.bytes_total),
-            raw_pct,
-            format_bytes(row.estimated_bytes),
-            est_pct,
+            bytes_pct,
             name_w = name_w,
         );
     }
@@ -456,8 +440,9 @@ fn print_span_table(rows: &[SpanRow], total_bytes: u64, total_estimated: u64, to
 struct CallsiteRow {
     label: String,
     samples: u64,
+    /// Bernstein-corrected, unbiased estimate of total bytes allocated at
+    /// this callsite. See [`SpanRow::bytes_total`].
     bytes_total: u64,
-    estimated_bytes: u64,
 }
 
 fn run_callsites(
@@ -467,12 +452,11 @@ fn run_callsites(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let profile = load(path)?;
     let rate_bytes = profile.period.max(1) as u64;
-    let mut rows = aggregate_callsites(&profile, &filter, rate_bytes);
+    let mut rows = aggregate_callsites(&profile, &filter);
 
-    rows.sort_by_key(|r| std::cmp::Reverse(r.estimated_bytes));
+    rows.sort_by_key(|r| std::cmp::Reverse(r.bytes_total));
 
     let total_bytes: u64 = rows.iter().map(|r| r.bytes_total).sum();
-    let total_estimated: u64 = rows.iter().map(|r| r.estimated_bytes).sum();
 
     let header = match &filter {
         Filter::WithSpan(name) => {
@@ -498,15 +482,11 @@ fn run_callsites(
 
     println!("{header}");
     println!();
-    print_callsite_table(&rows, total_bytes, total_estimated, top);
+    print_callsite_table(&rows, total_bytes, top);
     Ok(())
 }
 
-fn aggregate_callsites(
-    profile: &proto::Profile,
-    filter: &Filter,
-    rate_bytes: u64,
-) -> Vec<CallsiteRow> {
+fn aggregate_callsites(profile: &proto::Profile, filter: &Filter) -> Vec<CallsiteRow> {
     let span_name_key = string_index(profile, "span_name");
 
     // For WithSpan, look up the target string index; bail early if the name
@@ -550,13 +530,10 @@ fn aggregate_callsites(
         }
 
         let count = sample.value.first().copied().unwrap_or(0).max(0) as u64;
+        // Bernstein-corrected bytes arrive in sample.value[1] from the
+        // aggregator under geometric sampling. No further correction
+        // needed here.
         let bytes = sample.value.get(1).copied().unwrap_or(0).max(0) as u64;
-        let avg = bytes.checked_div(count).unwrap_or(0);
-        let estimated = if avg < rate_bytes {
-            count.saturating_mul(rate_bytes)
-        } else {
-            bytes
-        };
 
         let callsite_label = format_leaf_callsite(sample, profile, &location_by_id, &function_by_id);
 
@@ -564,11 +541,9 @@ fn aggregate_callsites(
             label: callsite_label,
             samples: 0,
             bytes_total: 0,
-            estimated_bytes: 0,
         });
         row.samples = row.samples.saturating_add(count);
         row.bytes_total = row.bytes_total.saturating_add(bytes);
-        row.estimated_bytes = row.estimated_bytes.saturating_add(estimated);
     }
 
     by_callsite.into_values().collect()
@@ -588,6 +563,7 @@ fn aggregate_callsites(
 const MACHINERY_NEEDLES: &[&str] = &[
     "backtrace::",
     "culpert::sampler",
+    "culpert::stack_capture",
     "culpert::allocator",
     "<culpert::allocator::TrackingAllocator",
     "__rust_alloc",
@@ -655,7 +631,7 @@ fn format_leaf_callsite(
     "<all-machinery stack>".to_string()
 }
 
-fn print_callsite_table(rows: &[CallsiteRow], total_bytes: u64, total_estimated: u64, top: usize) {
+fn print_callsite_table(rows: &[CallsiteRow], total_bytes: u64, top: usize) {
     let label_w = rows
         .iter()
         .take(top)
@@ -665,11 +641,11 @@ fn print_callsite_table(rows: &[CallsiteRow], total_bytes: u64, total_estimated:
         .clamp(20, 80);
 
     println!(
-        "  {:<label_w$}  {:>10}  {:>14}  {:>7}  {:>14}  {:>7}",
-        "callsite", "samples", "raw_bytes", "raw %", "est_bytes", "est %",
+        "  {:<label_w$}  {:>10}  {:>14}  {:>7}",
+        "callsite", "samples", "bytes", "bytes %",
         label_w = label_w
     );
-    println!("  {:-<label_w$}  {:->10}  {:->14}  {:->7}  {:->14}  {:->7}", "", "", "", "", "", "", label_w = label_w);
+    println!("  {:-<label_w$}  {:->10}  {:->14}  {:->7}", "", "", "", "", label_w = label_w);
 
     for row in rows.iter().take(top) {
         let truncated = if row.label.len() > label_w {
@@ -677,16 +653,13 @@ fn print_callsite_table(rows: &[CallsiteRow], total_bytes: u64, total_estimated:
         } else {
             row.label.clone()
         };
-        let raw_pct = pct(row.bytes_total, total_bytes);
-        let est_pct = pct(row.estimated_bytes, total_estimated);
+        let bytes_pct = pct(row.bytes_total, total_bytes);
         println!(
-            "  {:<label_w$}  {:>10}  {:>14}  {:>6.2}%  {:>14}  {:>6.2}%",
+            "  {:<label_w$}  {:>10}  {:>14}  {:>6.2}%",
             truncated,
             row.samples,
             format_bytes(row.bytes_total),
-            raw_pct,
-            format_bytes(row.estimated_bytes),
-            est_pct,
+            bytes_pct,
             label_w = label_w,
         );
     }
@@ -787,22 +760,25 @@ fn run_diff(
         )
         .into());
     }
-    let rate = before_profile.period.max(1) as u64;
+    // Bytes arrive Bernstein-corrected under geometric sampling, so the
+    // diff doesn't need the rate at all — but we still error out above
+    // if the two profiles' rates differ, since correction-then-compare
+    // across different rates would mix incompatible distributions.
 
-    let before_rows = aggregate_by_span(&before_profile, rate);
-    let after_rows = aggregate_by_span(&after_profile, rate);
+    let before_rows = aggregate_by_span(&before_profile);
+    let after_rows = aggregate_by_span(&after_profile);
 
-    let before_total: u64 = before_rows.iter().map(|r| r.estimated_bytes).sum();
-    let after_total: u64 = after_rows.iter().map(|r| r.estimated_bytes).sum();
+    let before_total: u64 = before_rows.iter().map(|r| r.bytes_total).sum();
+    let after_total: u64 = after_rows.iter().map(|r| r.bytes_total).sum();
 
     use std::collections::HashMap;
     let before_by_name: HashMap<String, u64> = before_rows
         .into_iter()
-        .map(|r| (r.name, r.estimated_bytes))
+        .map(|r| (r.name, r.bytes_total))
         .collect();
     let after_by_name: HashMap<String, u64> = after_rows
         .into_iter()
-        .map(|r| (r.name, r.estimated_bytes))
+        .map(|r| (r.name, r.bytes_total))
         .collect();
 
     // Union of span names present in either profile.
@@ -860,7 +836,7 @@ fn run_diff(
         after_path,
         before_total,
         after_total,
-        rate_bytes: rate,
+        rate_bytes: before_profile.period.max(1) as u64,
         threshold_bytes,
         threshold_pct,
         quiet_count,
