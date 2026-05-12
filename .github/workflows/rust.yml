@@ -16,6 +16,10 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - name: cargo fmt --check
+      # Fails the build if `cargo fmt --all` would produce a diff. Cheaper
+      # to enforce here than during review.
+      run: cargo fmt --all --check
     - name: Build
       run: cargo build --workspace --verbose
     - name: Clippy
