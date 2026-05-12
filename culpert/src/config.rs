@@ -1,5 +1,7 @@
 //! Profiler configuration.
 
+use std::collections::HashMap;
+
 /// How [`TrackingAllocator`](crate::TrackingAllocator) walks the call
 /// stack on each sampled allocation.
 ///
@@ -54,6 +56,36 @@ pub struct Config {
     /// How to walk the stack on each sample. See [`StackCaptureStrategy`]
     /// for trade-offs. Default [`Backtrace`](StackCaptureStrategy::Backtrace).
     pub stack_capture_strategy: StackCaptureStrategy,
+
+    /// Arbitrary key/value pairs to embed in every exported profile.
+    ///
+    /// Written verbatim into the pprof file's `comment` field (one entry
+    /// per `key=value` line, see the pprof spec). Read back by
+    /// `culpert::pprof::metadata()` and surfaced by `culpert info`.
+    ///
+    /// Intended for build / git / CI annotations so a profile is
+    /// self-describing on the wire — typical entries:
+    ///
+    /// ```rust
+    /// # use culpert::Config;
+    /// # let _ =
+    /// Config {
+    ///     metadata: [
+    ///         ("commit_sha", env!("CARGO_PKG_VERSION")),
+    ///         ("service",    "edge-worker"),
+    ///         ("branch",     "main"),
+    ///     ]
+    ///     .into_iter()
+    ///     .map(|(k, v)| (k.to_string(), v.to_string()))
+    ///     .collect(),
+    ///     ..Default::default()
+    /// }
+    /// # ;
+    /// ```
+    ///
+    /// Default is empty. Keys must not contain `=` (the separator is
+    /// recovered by splitting on the first `=`). Values are arbitrary.
+    pub metadata: HashMap<String, String>,
 }
 
 impl Default for Config {
@@ -63,6 +95,7 @@ impl Default for Config {
             stack_depth: 32,
             buffer_capacity: 1024,
             stack_capture_strategy: StackCaptureStrategy::Backtrace,
+            metadata: HashMap::new(),
         }
     }
 }

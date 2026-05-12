@@ -508,6 +508,7 @@ version = "0.0.1"
 dependencies = [
  "clap",
  "culpert",
+ "serde_json",
 ]
 
 [[package]]

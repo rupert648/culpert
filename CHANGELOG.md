@@ -66,6 +66,41 @@ to crates.io. Until then, depend on this project from a git URL.
     with a pointer to the foundations / tracing adapters; a `ScopedFuture`
     wrapper for clean async parent semantics is a v0.2.x follow-up.
 
+- **CLI improvements for CI integration.** Three new pieces aimed at
+  letting `culpert diff` drive PR gates and at making profiles
+  self-describing on the wire (so a future culpert-store can key
+  artefacts by what's *in* the file rather than out-of-band metadata):
+
+  - **`culpert diff` exit codes.** Exit `1` when any row classifies as
+    a regression or NEW after the threshold gates (so CI can gate
+    directly: `culpert diff before.pb.gz after.pb.gz || exit 1`).
+    Exit `2` for I/O or usage errors. New `--no-fail` flag preserves
+    the old "always exit 0" behaviour for steps that want to post the
+    report and continue regardless.
+
+  - **`culpert diff --format json`.** Structured output alongside the
+    existing `text` / `markdown` formats. Schema is documented in the
+    `render_diff_json` doc-comment (top-level keys: `schema_version`,
+    `before`, `after`, `rate_bytes`, `thresholds`, `rows`, `summary`)
+    and stamped with `schema_version: 1` so downstream consumers can
+    pin against breaking changes. Includes any metadata embedded in
+    the source profiles (see next bullet).
+
+  - **Profile metadata embedding.** New `Config::metadata:
+    HashMap<String, String>` field; whatever the user puts in there
+    at install time is written into the pprof's `comment` field as
+    `key=value` lines and surfaced by `culpert::pprof::metadata()`.
+    Comment order is deterministic (sorted by key) so the on-disk
+    bytes don't drift across runs with the same inputs.
+
+  - **`culpert info <file>`** subcommand. Reads the embedded metadata
+    + a short summary (sample count, total bytes, sample rate,
+    unique-span count) without rendering the full report. Useful for
+    CI logs ("uploaded profile for commit abc123") and quick file
+    inspection.
+
+  Round-trip + malformed-input tests added to `culpert/src/pprof.rs`.
+
 - **Automatic metadata-cache eviction.** New `SpanContext::on_snapshot()`
   hook with a default no-op impl. The aggregator calls it after every
   `snapshot()`, once the `Profile` has its own cloned copy of every

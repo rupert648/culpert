@@ -82,10 +82,30 @@ enum Cmd {
         #[arg(long, default_value = "5.0")]
         threshold_pct: f64,
 
-        /// Output format. `text` is human-readable; `markdown` is designed for
-        /// PR comments (e.g. piped into `$GITHUB_STEP_SUMMARY` from a CI step).
+        /// Output format. `text` is human-readable; `markdown` is designed
+        /// for PR comments (e.g. piped into `$GITHUB_STEP_SUMMARY` from a
+        /// CI step); `json` is structured output for further processing
+        /// (e.g. uploading to a profile store, machine-driven gating).
         #[arg(long, value_enum, default_value = "text")]
         format: DiffFormat,
+
+        /// Exit with code 0 even when regressions are found. By default
+        /// `culpert diff` exits 1 if any row classifies as a regression
+        /// (or NEW) after thresholds, so CI can gate on the result. Pass
+        /// this flag when you just want the report without the fail signal
+        /// (e.g. local debugging, or a CI step that always succeeds and
+        /// posts a comment).
+        #[arg(long)]
+        no_fail: bool,
+    },
+
+    /// Print embedded metadata + a short summary of a culpert profile.
+    /// Useful as a first look at a captured profile (`culpert info
+    /// foo.pb.gz`) and in CI logs to confirm the right artefact was
+    /// uploaded ("for commit abc123, took at ...").
+    Info {
+        /// Path to the .pb.gz profile file.
+        file: PathBuf,
     },
 }
 
@@ -93,11 +113,15 @@ enum Cmd {
 enum DiffFormat {
     Text,
     Markdown,
+    Json,
 }
 
 fn main() {
     let cli = Cli::parse();
-    let res = match cli.cmd {
+    // Each subcommand returns the exit code on success: 0 for plain
+    // success, 1 from `diff` when regressions are found and `--no-fail`
+    // isn't set. Usage / I/O errors propagate via `Err` and use 2.
+    let res: Result<i32, Box<dyn std::error::Error>> = match cli.cmd {
         Cmd::Report {
             file,
             span,
@@ -106,13 +130,13 @@ fn main() {
             top,
         } => {
             if let Some(name) = span {
-                run_callsites(&file, Filter::WithSpan(name), top)
+                run_callsites(&file, Filter::WithSpan(name), top).map(|()| 0)
             } else if no_span {
-                run_callsites(&file, Filter::NoSpan, top)
+                run_callsites(&file, Filter::NoSpan, top).map(|()| 0)
             } else if flat {
-                run_top_spans(&file, top)
+                run_top_spans(&file, top).map(|()| 0)
             } else {
-                run_tree(&file, top)
+                run_tree(&file, top).map(|()| 0)
             }
         }
         Cmd::Diff {
@@ -122,11 +146,24 @@ fn main() {
             threshold_bytes,
             threshold_pct,
             format,
-        } => run_diff(&before, &after, top, threshold_bytes, threshold_pct, format),
+            no_fail,
+        } => run_diff(&before, &after, top, threshold_bytes, threshold_pct, format).map(
+            |had_regressions| {
+                if had_regressions && !no_fail {
+                    1
+                } else {
+                    0
+                }
+            },
+        ),
+        Cmd::Info { file } => run_info(&file).map(|()| 0),
     };
-    if let Err(e) = res {
-        eprintln!("error: {e}");
-        std::process::exit(1);
+    match res {
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::exit(2);
+        }
+        Ok(code) => std::process::exit(code),
     }
 }
 
@@ -754,6 +791,9 @@ enum DiffKind {
     Quiet,
 }
 
+/// Run the diff command. Returns `true` if any row classifies as a
+/// regression (or NEW) after the threshold gates pass — the caller
+/// translates that into an exit code unless `--no-fail` was set.
 fn run_diff(
     before_path: &PathBuf,
     after_path: &PathBuf,
@@ -761,7 +801,7 @@ fn run_diff(
     threshold_bytes: u64,
     threshold_pct: f64,
     format: DiffFormat,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<bool, Box<dyn std::error::Error>> {
     let before_profile = load(before_path)?;
     let after_profile = load(after_path)?;
 
@@ -856,11 +896,22 @@ fn run_diff(
         quiet_count,
     };
 
+    let had_regressions = diffs
+        .iter()
+        .any(|d| matches!(d.kind, DiffKind::Regression | DiffKind::New));
+
     match format {
         DiffFormat::Text => render_diff_text(&summary, &regressions, &improvements),
         DiffFormat::Markdown => render_diff_markdown(&summary, &regressions, &improvements),
+        DiffFormat::Json => render_diff_json(
+            &summary,
+            &diffs,
+            &before_profile,
+            &after_profile,
+            had_regressions,
+        )?,
     }
-    Ok(())
+    Ok(had_regressions)
 }
 
 fn classify(
@@ -1067,4 +1118,146 @@ fn print_diff_section_markdown(title: &str, rows: &[&DiffRow]) {
             pct_cell,
         );
     }
+}
+
+/// JSON output for `culpert diff --format json`. Designed for ingestion
+/// by CI tooling and the planned culpert-store worker: every numeric
+/// field is a plain number (not pretty-printed bytes) so the consumer
+/// can do their own formatting, and the schema is flat for easy parsing.
+///
+/// Stability: the top-level keys (`schema_version`, `before`, `after`,
+/// `rate_bytes`, `thresholds`, `rows`, `summary`) and the per-row keys
+/// (`name`, `before`, `after`, `delta`, `pct`, `kind`) are part of the
+/// public CLI contract — additive changes are fine, but renames are
+/// breaking. `schema_version` bumps on any breaking change.
+fn render_diff_json(
+    summary: &DiffSummary,
+    diffs: &[DiffRow],
+    before_profile: &proto::Profile,
+    after_profile: &proto::Profile,
+    had_regressions: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use serde_json::{Value, json};
+
+    let kind_str = |k: DiffKind| -> &'static str {
+        match k {
+            DiffKind::Regression => "regression",
+            DiffKind::Improvement => "improvement",
+            DiffKind::New => "new",
+            DiffKind::Gone => "gone",
+            DiffKind::Quiet => "quiet",
+        }
+    };
+
+    let rows: Vec<Value> = diffs
+        .iter()
+        .map(|d| {
+            json!({
+                "name": d.name,
+                "before": d.before,
+                "after": d.after,
+                "delta": d.delta,
+                "pct": d.pct,
+                "kind": kind_str(d.kind),
+            })
+        })
+        .collect();
+
+    let regressions = diffs
+        .iter()
+        .filter(|d| matches!(d.kind, DiffKind::Regression | DiffKind::New))
+        .count();
+    let improvements = diffs
+        .iter()
+        .filter(|d| matches!(d.kind, DiffKind::Improvement | DiffKind::Gone))
+        .count();
+
+    let out = json!({
+        "schema_version": 1,
+        "before": {
+            "path": summary.before_path.display().to_string(),
+            "total_bytes": summary.before_total,
+            "metadata": pprof::metadata(before_profile),
+        },
+        "after": {
+            "path": summary.after_path.display().to_string(),
+            "total_bytes": summary.after_total,
+            "metadata": pprof::metadata(after_profile),
+        },
+        "rate_bytes": summary.rate_bytes,
+        "thresholds": {
+            "bytes": summary.threshold_bytes,
+            "pct": summary.threshold_pct,
+        },
+        "rows": rows,
+        "summary": {
+            "regressions": regressions,
+            "improvements": improvements,
+            "quiet": summary.quiet_count,
+            "had_regressions": had_regressions,
+            "total_delta_bytes":
+                summary.after_total as i64 - summary.before_total as i64,
+        },
+    });
+
+    println!("{}", serde_json::to_string_pretty(&out)?);
+    Ok(())
+}
+
+// ---- info --------------------------------------------------------------
+
+/// Print the embedded metadata + a short summary of a culpert profile.
+/// Doesn't render the per-span / per-callsite breakdown — that's what
+/// `culpert report` is for. Useful for CI logs and quick file inspection.
+fn run_info(path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let profile = load(path)?;
+
+    // Total counts across all samples in the file (regular + synthetic).
+    // Synthetic samples (parent-span markers) have count=0/bytes=0 so
+    // they don't skew the totals.
+    let sample_count: i64 = profile
+        .sample
+        .iter()
+        .filter_map(|s| s.value.first())
+        .sum();
+    let total_bytes: i64 = profile
+        .sample
+        .iter()
+        .filter_map(|s| s.value.get(1))
+        .sum();
+
+    // Unique span names referenced by any sample.
+    let span_name_key = string_index(&profile, "span_name");
+    let mut unique_spans: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    for sample in &profile.sample {
+        if let Some(name) = span_name_key.and_then(|k| label_str(sample, k, &profile)) {
+            unique_spans.insert(name);
+        }
+    }
+
+    let rate_bytes = profile.period.max(1) as u64;
+    let metadata = pprof::metadata(&profile);
+
+    println!("File:            {}", path.display());
+    println!("Sample rate:     {}/alloc", format_bytes(rate_bytes));
+    println!("Total samples:   {sample_count}");
+    println!("Total bytes:     {}", format_bytes(total_bytes.max(0) as u64));
+    println!("Unique spans:    {}", unique_spans.len());
+
+    if metadata.is_empty() {
+        println!();
+        println!("Metadata:        (none — install with Config {{ metadata: ... }} to embed)");
+    } else {
+        println!();
+        println!("Metadata:");
+        // Stable, sorted output.
+        let mut pairs: Vec<(&String, &String)> = metadata.iter().collect();
+        pairs.sort_by(|a, b| a.0.cmp(b.0));
+        let key_w = pairs.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
+        for (k, v) in pairs {
+            println!("  {k:<key_w$}  {v}");
+        }
+    }
+
+    Ok(())
 }

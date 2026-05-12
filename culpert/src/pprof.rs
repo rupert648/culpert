@@ -458,6 +458,17 @@ fn build_proto(profile: &Profile) -> proto::Profile {
         .map(|d| d.as_nanos() as i64)
         .unwrap_or(0);
 
+    // Embed user-supplied metadata as pprof `comment` lines in
+    // `key=value` form. Sorted by key so the on-disk byte sequence is
+    // deterministic across runs with the same metadata — important for
+    // tests and content-addressing storage.
+    let mut metadata_pairs: Vec<(&String, &String)> = profile.config.metadata.iter().collect();
+    metadata_pairs.sort_by(|a, b| a.0.cmp(b.0));
+    let comment: Vec<i64> = metadata_pairs
+        .into_iter()
+        .map(|(k, v)| strs.intern(&format!("{k}={v}")))
+        .collect();
+
     proto::Profile {
         sample_type,
         sample: samples,
@@ -471,9 +482,32 @@ fn build_proto(profile: &Profile) -> proto::Profile {
         duration_nanos: 0,
         period_type: Some(period_type),
         period: profile.config.rate_bytes as i64,
-        comment: vec![],
+        comment,
         default_sample_type: 0,
     }
+}
+
+/// Extract the `key=value` metadata embedded by [`encode`] into a
+/// decoded pprof profile's comment field. Pairs whose comment doesn't
+/// match the `key=value` shape are skipped silently — third-party pprof
+/// tools sometimes emit free-form comments which we don't want to mis-
+/// parse as metadata.
+///
+/// Used by `culpert-cli` to surface the embedded metadata via
+/// `culpert info` and to include it in `culpert diff --format json`
+/// output.
+pub fn metadata(profile: &proto::Profile) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    for &idx in &profile.comment {
+        let Some(s) = profile.string_table.get(idx as usize) else {
+            continue;
+        };
+        let Some((k, v)) = s.split_once('=') else {
+            continue;
+        };
+        out.insert(k.to_string(), v.to_string());
+    }
+    out
 }
 
 #[cfg(test)]
@@ -640,5 +674,56 @@ mod tests {
         assert_eq!(decoded.function.len(), 0);
         // String table must still have the empty string at [0].
         assert_eq!(decoded.string_table[0], "");
+    }
+
+    #[test]
+    fn metadata_round_trip() {
+        let mut md = std::collections::HashMap::new();
+        md.insert("commit_sha".to_string(), "abc123".to_string());
+        md.insert("branch".to_string(), "main".to_string());
+        md.insert("service".to_string(), "edge-worker".to_string());
+
+        let profile = Profile {
+            entries: vec![],
+            spans: std::collections::HashMap::new(),
+            dropped_samples: 0,
+            config: Config {
+                metadata: md.clone(),
+                ..Config::default()
+            },
+        };
+        let bytes = encode(&profile);
+        let decoded = proto::Profile::decode(&bytes[..]).expect("decode");
+
+        // Three comment entries, one per metadata pair, sorted by key.
+        assert_eq!(decoded.comment.len(), 3);
+        let recovered = metadata(&decoded);
+        assert_eq!(recovered, md);
+    }
+
+    #[test]
+    fn metadata_skips_malformed_comments() {
+        // Hand-craft a proto::Profile whose `comment` field includes both
+        // a valid metadata line and a free-form comment without `=`.
+        // The reader must ignore the latter, not panic or mis-parse it.
+        let string_table = vec![
+            String::new(),         // index 0: required empty
+            "k=v".to_string(),     // valid kv
+            "free-form".to_string(), // not metadata
+        ];
+        let mut p = proto::Profile {
+            string_table,
+            comment: vec![1, 2],
+            ..Default::default()
+        };
+        // (Fill required fields so `Default` is enough.)
+        let recovered = metadata(&p);
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered.get("k"), Some(&"v".to_string()));
+
+        // Out-of-bounds comment index — silently skipped.
+        p.comment.push(99);
+        let recovered = metadata(&p);
+        assert_eq!(recovered.len(), 1);
     }
 }

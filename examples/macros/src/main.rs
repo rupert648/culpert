@@ -49,6 +49,7 @@ fn main() {
             stack_depth: 32,
             buffer_capacity: 1 << 16,
             stack_capture_strategy: strategy,
+            ..Default::default()
         },
     );
 
