@@ -36,4 +36,14 @@ impl SpanContext for TracingSpanContext {
     fn metadata(&self, span: SpanId) -> Option<SpanMetadata> {
         self.shared.metadata.read().get(&span).cloned()
     }
+
+    fn on_snapshot(&self) {
+        // Same rationale as in `culpert_foundations::FoundationsSpanContext`:
+        // `CulpertLayer::on_new_span` inserts one entry per tracing::span::Id
+        // observed, and tracing-subscriber's Registry mints a fresh Id per
+        // span instance. Without eviction the map grows for the process
+        // lifetime. The aggregator has already cloned every metadata entry
+        // it needs into the emitted `Profile`.
+        self.shared.metadata.write().clear();
+    }
 }

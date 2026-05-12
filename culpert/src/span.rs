@@ -47,4 +47,22 @@ pub trait SpanContext: Send + Sync + 'static {
     /// Resolve metadata for a span. Called at first sight (cache miss) and at
     /// export time. Allowed to allocate.
     fn metadata(&self, span: SpanId) -> Option<SpanMetadata>;
+
+    /// Called by the aggregator at the end of every `snapshot()`, after it
+    /// has finished copying metadata for the current sample set into the
+    /// emitted [`crate::Profile`].
+    ///
+    /// Default impl is a no-op. Adapters that cache span metadata
+    /// monotonically (the foundations / tracing / local-scope adapters all
+    /// do, keyed by a per-span-instance id minted by the underlying tracer)
+    /// should override this to drop entries that are no longer reachable —
+    /// otherwise the cache grows for the entire process lifetime, leaking
+    /// roughly 70–100 bytes per unique span observed.
+    ///
+    /// Correctness: by the time this is called the aggregator has already
+    /// `.clone()`d every metadata entry it needed into the returned
+    /// `Profile`, so clearing the source cache is safe. Subsequent samples
+    /// on an active span re-take the first-sight slow path and re-cache;
+    /// the cost is one HashMap write per still-running span per snapshot.
+    fn on_snapshot(&self) {}
 }

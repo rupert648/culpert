@@ -145,6 +145,13 @@ pub(crate) fn snapshot(config: &Config, ctx: &dyn SpanContext) -> Profile {
         });
     }
 
+    // Let the SpanContext evict its internal metadata cache now that we've
+    // copied everything we need into `spans`. Default impl is a no-op; the
+    // foundations / tracing / local-scope adapters override this to drop
+    // per-span-instance entries that would otherwise grow without bound for
+    // the process lifetime. See `SpanContext::on_snapshot` docs.
+    ctx.on_snapshot();
+
     crate::debug::dbglog!("aggregator::snapshot: done");
 
     Profile {

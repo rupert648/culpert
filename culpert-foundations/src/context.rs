@@ -113,6 +113,15 @@ impl SpanContext for FoundationsSpanContext {
     fn metadata(&self, span: SpanId) -> Option<SpanMetadata> {
         self.by_id.read().get(&span).cloned()
     }
+
+    fn on_snapshot(&self) {
+        // The aggregator has already copied every metadata entry it needs
+        // into the emitted `Profile`. Drop the by-id cache so it doesn't
+        // accumulate one entry per cf-rustracing span_id for the entire
+        // process lifetime (a real leak in long-running services — see the
+        // trait's docs).
+        self.by_id.write().clear();
+    }
 }
 
 impl FoundationsSpanContext {

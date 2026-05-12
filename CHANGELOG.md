@@ -66,6 +66,26 @@ to crates.io. Until then, depend on this project from a git URL.
     with a pointer to the foundations / tracing adapters; a `ScopedFuture`
     wrapper for clean async parent semantics is a v0.2.x follow-up.
 
+- **Automatic metadata-cache eviction.** New `SpanContext::on_snapshot()`
+  hook with a default no-op impl. The aggregator calls it after every
+  `snapshot()`, once the `Profile` has its own cloned copy of every
+  span's metadata. The three production adapters override it to drop
+  their internal `HashMap<SpanId, SpanMetadata>` caches:
+  - `culpert_foundations::FoundationsSpanContext::by_id`
+  - `culpert_tracing::Shared::metadata`
+  - `culpert::scope::METADATA` (used by `LocalSpanContext` and `#[culpert::span_fn]`)
+
+  Pre-fix the caches grew monotonically over the process lifetime —
+  one entry per cf-rustracing / tracing-subscriber / culpert-minted
+  span_id, ~70–100 bytes each. A service taking 100 req/s with three
+  spans per request leaked ~700 MB/day. New
+  `culpert/tests/metadata_eviction.rs` integration test asserts the
+  cache is empty after a snapshot across two consecutive trials.
+
+  The hook is a default-empty trait method, so user-defined
+  `SpanContext` impls compile unchanged and just don't get auto-eviction
+  unless they opt in.
+
 - **Geometric sampling + Bernstein-unbiased per-span totals.** Replaces
   the v0.1 deterministic counter-mod rearm (`+= rate_bytes`) with a
   fresh `Geometric(1/rate_bytes)` draw (Go / jemalloc-style — reset, no

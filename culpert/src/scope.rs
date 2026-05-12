@@ -140,6 +140,16 @@ impl SpanContext for LocalSpanContext {
     fn metadata(&self, span: SpanId) -> Option<SpanMetadata> {
         METADATA.read().get(&span).cloned()
     }
+
+    fn on_snapshot(&self) {
+        // METADATA is a process-global LazyLock<RwLock<HashMap>> populated
+        // by `enter()` (one entry per minted SpanId). Without eviction it
+        // grows monotonically for the process lifetime — same leak as the
+        // foundations / tracing adapters. The aggregator has already cloned
+        // every metadata entry it needs into the emitted `Profile` by the
+        // time we get here.
+        METADATA.write().clear();
+    }
 }
 
 #[cfg(test)]

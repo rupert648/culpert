@@ -99,8 +99,20 @@ fn end_to_end_attribution_through_foundations() {
     // ----- hierarchy --------------------------------------------------
     // Enter a parent span and a child span inside it; verify the adapter
     // extracts the parent SpanId from cf-rustracing's ChildOf reference.
+    //
+    // The parent block needs at least one allocation of its own so that
+    // its metadata gets cached in the FoundationsSpanContext (the cache
+    // is populated on first-sight via `current_span_inner`, which only
+    // fires when an alloc inside the parent's scope is sampled). Under
+    // v0.2 geometric sampling a single tiny allocation is only sampled
+    // with low probability, so we do enough work to make the cache hit
+    // statistically certain.
     {
         let _parent = tracing::span("parent_via_adapter");
+        for _ in 0..30 {
+            let v = Vec::<u8>::with_capacity(10_000);
+            std::hint::black_box(&v);
+        }
         {
             let _child = tracing::span("child_via_adapter");
             for _ in 0..30 {
