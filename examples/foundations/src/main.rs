@@ -18,7 +18,7 @@ use culpert::{Config, TrackingAllocator};
 use foundations::service_info;
 use foundations::telemetry::settings::TelemetrySettings;
 use foundations::telemetry::tracing::span_fn;
-use foundations::telemetry::{TelemetryConfig, init};
+use foundations::telemetry::{init, TelemetryConfig};
 use std::alloc::System;
 
 #[global_allocator]

@@ -1,10 +1,10 @@
 //! [`pprof_route`] — builder for the `TelemetryServerRoute` that serves
 //! culpert's gzipped pprof profile.
 
-use foundations::telemetry::TelemetryServerRoute;
 use foundations::telemetry::reexports::http_body_util::{BodyExt, Full};
 use foundations::telemetry::reexports::hyper::body::Bytes;
-use foundations::telemetry::reexports::hyper::{Method, Response, StatusCode, header};
+use foundations::telemetry::reexports::hyper::{header, Method, Response, StatusCode};
+use foundations::telemetry::TelemetryServerRoute;
 use std::convert::Infallible;
 
 /// Build a [`TelemetryServerRoute`] that serves a gzipped pprof profile of

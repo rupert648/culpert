@@ -6,9 +6,9 @@ use culpert::{SpanId, SpanMetadata};
 use std::num::NonZeroU64;
 use std::sync::Arc;
 use tracing::span::{Attributes, Id};
-use tracing_subscriber::Layer;
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::registry::LookupSpan;
+use tracing_subscriber::Layer;
 
 /// Subscriber layer that records each span's `name` and parent `SpanId` in
 /// culpert's shared metadata map.

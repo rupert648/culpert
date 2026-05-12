@@ -4,7 +4,7 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{ItemFn, LitStr, parse_macro_input};
+use syn::{parse_macro_input, ItemFn, LitStr};
 
 /// `#[culpert::span_fn("name")]` — wraps the function body in a
 /// [`culpert::scope::Scope`](https://docs.rs/culpert/latest/culpert/scope/struct.Scope.html)

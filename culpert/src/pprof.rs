@@ -212,8 +212,8 @@ pub fn encode(profile: &Profile) -> Vec<u8> {
 /// Encode a [`Profile`] as gzip-compressed pprof bytes — the on-disk
 /// convention pprof tooling expects (`*.pb.gz`).
 pub fn encode_gzipped(profile: &Profile) -> std::io::Result<Vec<u8>> {
-    use flate2::Compression;
     use flate2::write::GzEncoder;
+    use flate2::Compression;
     use std::io::Write;
 
     let bytes = encode(profile);
@@ -410,11 +410,8 @@ fn build_proto(profile: &Profile) -> proto::Profile {
     // below carries `span_id` + `span_name` for the parent so the CLI can
     // close the loop, with `value = [0, 0]` so it doesn't add to any
     // aggregate.
-    let entry_span_ids: std::collections::HashSet<SpanId> = profile
-        .entries
-        .iter()
-        .filter_map(|e| e.span)
-        .collect();
+    let entry_span_ids: std::collections::HashSet<SpanId> =
+        profile.entries.iter().filter_map(|e| e.span).collect();
     for (&span_id, meta) in &profile.spans {
         if entry_span_ids.contains(&span_id) {
             continue;
@@ -616,8 +613,11 @@ mod tests {
         assert_eq!(decoded.string_table[0], "");
 
         // Span labels present on the spanned samples; absent on the unspanned one.
-        let spanned: Vec<&proto::Sample> =
-            decoded.sample.iter().filter(|s| !s.label.is_empty()).collect();
+        let spanned: Vec<&proto::Sample> = decoded
+            .sample
+            .iter()
+            .filter(|s| !s.label.is_empty())
+            .collect();
         assert_eq!(spanned.len(), 2);
 
         for s in spanned {
@@ -707,8 +707,8 @@ mod tests {
         // a valid metadata line and a free-form comment without `=`.
         // The reader must ignore the latter, not panic or mis-parse it.
         let string_table = vec![
-            String::new(),         // index 0: required empty
-            "k=v".to_string(),     // valid kv
+            String::new(),           // index 0: required empty
+            "k=v".to_string(),       // valid kv
             "free-form".to_string(), // not metadata
         ];
         let mut p = proto::Profile {

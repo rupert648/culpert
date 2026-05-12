@@ -51,7 +51,7 @@ fn metadata_cache_evicts_on_snapshot() {
     // it should be fully populated regardless of cache state.
     for id in &scope_ids {
         let _ = profile.spans.get(id); // may or may not be present (depends on whether the span had a direct sample), the important
-        // assertion is below: the cache itself is empty.
+                                       // assertion is below: the cache itself is empty.
         let _ = ctx.metadata(*id); // pre-clear-check is below
     }
 
@@ -66,7 +66,8 @@ fn metadata_cache_evicts_on_snapshot() {
         }
     }
     assert_eq!(
-        still_cached, 0,
+        still_cached,
+        0,
         "expected metadata cache to be empty after snapshot, but \
          {still_cached} of {} entries are still cached",
         scope_ids.len()

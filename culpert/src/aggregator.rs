@@ -72,7 +72,10 @@ pub(crate) fn snapshot(config: &Config, ctx: &dyn SpanContext) -> Profile {
     let mut raw: Vec<RawSample> = Vec::new();
     let dropped_samples = thread_state::drain_all(&mut raw);
 
-    crate::debug::dbglog!("aggregator::snapshot: drain done, {} raw samples", raw.len());
+    crate::debug::dbglog!(
+        "aggregator::snapshot: drain done, {} raw samples",
+        raw.len()
+    );
 
     // Bucket by (span, hash of frames). We keep raw IPs for the bucket key
     // and the canonical frame list, then resolve symbols once per bucket
@@ -95,7 +98,10 @@ pub(crate) fn snapshot(config: &Config, ctx: &dyn SpanContext) -> Profile {
         entry.samples = entry.samples.saturating_add(1);
     }
 
-    crate::debug::dbglog!("aggregator::snapshot: {} buckets, resolving symbols", buckets.len());
+    crate::debug::dbglog!(
+        "aggregator::snapshot: {} buckets, resolving symbols",
+        buckets.len()
+    );
 
     let entries: Vec<ProfileEntry> = buckets
         .into_iter()

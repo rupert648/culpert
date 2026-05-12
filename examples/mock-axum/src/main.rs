@@ -21,13 +21,13 @@
 //! - `GET /vec`     — large `Vec` allocations
 //! - `GET /nested`  — calls multiple `#[span_fn]` sub-spans with mixed allocs
 
-use axum::{Json, Router, routing::get};
+use axum::{routing::get, Json, Router};
 use culpert::TrackingAllocator;
 use foundations::addr::ListenAddr;
 use foundations::service_info;
 use foundations::telemetry::settings::TelemetrySettings;
 use foundations::telemetry::tracing::span_fn;
-use foundations::telemetry::{TelemetryConfig, init};
+use foundations::telemetry::{init, TelemetryConfig};
 use serde::Serialize;
 use std::alloc::System;
 use std::net::SocketAddr;
@@ -173,7 +173,7 @@ async fn vec_route() -> String {
 async fn nested_route() -> String {
     let parsed = parse_payload();
     let validated = validate_payload(&parsed);
-    
+
     build_response(validated)
 }
 

@@ -17,8 +17,8 @@
 //! `rustracing_span()` from inside, possibly on a different worker.
 
 use foundations::reexports_for_macros::cf_rustracing::span::InspectableSpan;
-use foundations::telemetry::TelemetryContext;
 use foundations::telemetry::tracing::{self, rustracing_span};
+use foundations::telemetry::TelemetryContext;
 use std::sync::Arc;
 use tokio::time::Duration;
 
@@ -51,7 +51,11 @@ pub async fn run() {
 
         // Take a child span and confirm hierarchy still works inside.
         let _child = tracing::span("child_in_task");
-        let child_name = rustracing_span().unwrap().read().operation_name().to_owned();
+        let child_name = rustracing_span()
+            .unwrap()
+            .read()
+            .operation_name()
+            .to_owned();
         (name, ptr, tid, child_name)
     }));
 
@@ -66,14 +70,10 @@ pub async fn run() {
              re-enters the scope, current_span() resolves to the task's span)."
         );
     } else {
-        println!(
-            "UNEXPECTED: span name diverged across .spawn(). Investigate before Phase 1."
-        );
+        println!("UNEXPECTED: span name diverged across .spawn(). Investigate before Phase 1.");
     }
     if outer_thread != tid_in {
-        println!(
-            "Bonus: confirmed thread migration across {outer_thread:?} -> {tid_in:?}."
-        );
+        println!("Bonus: confirmed thread migration across {outer_thread:?} -> {tid_in:?}.");
     } else {
         println!(
             "Note: scheduler kept the task on the same thread this run. The poll-based \

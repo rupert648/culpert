@@ -85,7 +85,10 @@ fn end_to_end_attribution() {
     let bytes_s2 = bytes_for(&p1, Some(s2));
     let bytes_none = bytes_for(&p1, None);
 
-    eprintln!("p1: s1={bytes_s1}B s2={bytes_s2}B none={bytes_none}B dropped={}", p1.dropped_samples);
+    eprintln!(
+        "p1: s1={bytes_s1}B s2={bytes_s2}B none={bytes_none}B dropped={}",
+        p1.dropped_samples
+    );
 
     // Each span allocated ~500 KB. With 4 KiB sampling we expect a healthy
     // count; assert generously to avoid flake.
@@ -97,7 +100,10 @@ fn end_to_end_attribution() {
     let s1_count = samples_for(&p1, Some(s1));
     let s2_count = samples_for(&p1, Some(s2));
     let ratio = (s1_count.max(s2_count)) as f64 / (s1_count.min(s2_count).max(1)) as f64;
-    assert!(ratio < 4.0, "s1/s2 sample counts differ by >4x: {s1_count} vs {s2_count}");
+    assert!(
+        ratio < 4.0,
+        "s1/s2 sample counts differ by >4x: {s1_count} vs {s2_count}"
+    );
 
     // Metadata resolved.
     let m1 = p1.spans.get(&s1).expect("span 1 metadata missing");
@@ -106,7 +112,10 @@ fn end_to_end_attribution() {
     assert_eq!(m2.name, "span_two");
 
     // Outside-span samples exist (our 30 + test machinery).
-    assert!(bytes_none > 0, "expected at least some samples outside any span");
+    assert!(
+        bytes_none > 0,
+        "expected at least some samples outside any span"
+    );
 
     // ----- Phase B: multi-thread, four worker spans ---------------------
 
@@ -145,8 +154,16 @@ fn end_to_end_attribution() {
     }
 
     // Snapshot 1 drained spans 1/2: snapshot 2 should not see them again.
-    assert_eq!(bytes_for(&p2, Some(s1)), 0, "span 1 should be drained by p1");
-    assert_eq!(bytes_for(&p2, Some(s2)), 0, "span 2 should be drained by p1");
+    assert_eq!(
+        bytes_for(&p2, Some(s1)),
+        0,
+        "span 1 should be drained by p1"
+    );
+    assert_eq!(
+        bytes_for(&p2, Some(s2)),
+        0,
+        "span 2 should be drained by p1"
+    );
 
     // ----- Phase C: snapshot drains everything --------------------------
 
@@ -183,8 +200,14 @@ fn end_to_end_attribution() {
     let bytes_outer = bytes_for(&p4, Some(outer));
     let bytes_inner = bytes_for(&p4, Some(inner));
     eprintln!("p4: outer={bytes_outer}B inner={bytes_inner}B");
-    assert!(bytes_outer > 100_000, "outer span attribution too low: {bytes_outer}");
-    assert!(bytes_inner > 100_000, "inner span attribution too low: {bytes_inner}");
+    assert!(
+        bytes_outer > 100_000,
+        "outer span attribution too low: {bytes_outer}"
+    );
+    assert!(
+        bytes_inner > 100_000,
+        "inner span attribution too low: {bytes_inner}"
+    );
 
     let m_outer = p4.spans.get(&outer).expect("outer metadata");
     let m_inner = p4.spans.get(&inner).expect("inner metadata");

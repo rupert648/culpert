@@ -459,10 +459,20 @@ fn print_span_table(rows: &[SpanRow], total_bytes: u64, top: usize) {
 
     println!(
         "  {:<name_w$}  {:>10}  {:>14}  {:>7}",
-        "span", "samples", "bytes", "bytes %",
+        "span",
+        "samples",
+        "bytes",
+        "bytes %",
         name_w = name_w
     );
-    println!("  {:-<name_w$}  {:->10}  {:->14}  {:->7}", "", "", "", "", name_w = name_w);
+    println!(
+        "  {:-<name_w$}  {:->10}  {:->14}  {:->7}",
+        "",
+        "",
+        "",
+        "",
+        name_w = name_w
+    );
 
     for row in rows.iter().take(top) {
         let bytes_pct = pct(row.bytes_total, total_bytes);
@@ -548,10 +558,9 @@ fn aggregate_callsites(profile: &proto::Profile, filter: &Filter) -> Vec<Callsit
     // Predicate: include this sample?
     let want = |sample: &proto::Sample| -> bool {
         match (filter, span_name_key, target_idx) {
-            (Filter::WithSpan(_), Some(key), Some(target)) => sample
-                .label
-                .iter()
-                .any(|l| l.key == key && l.str == target),
+            (Filter::WithSpan(_), Some(key), Some(target)) => {
+                sample.label.iter().any(|l| l.key == key && l.str == target)
+            }
             (Filter::NoSpan, Some(key), _) => {
                 // Include if no span_name label is attached.
                 !sample.label.iter().any(|l| l.key == key)
@@ -586,13 +595,16 @@ fn aggregate_callsites(profile: &proto::Profile, filter: &Filter) -> Vec<Callsit
             continue;
         }
 
-        let callsite_label = format_leaf_callsite(sample, profile, &location_by_id, &function_by_id);
+        let callsite_label =
+            format_leaf_callsite(sample, profile, &location_by_id, &function_by_id);
 
-        let row = by_callsite.entry(callsite_label.clone()).or_insert(CallsiteRow {
-            label: callsite_label,
-            samples: 0,
-            bytes_total: 0,
-        });
+        let row = by_callsite
+            .entry(callsite_label.clone())
+            .or_insert(CallsiteRow {
+                label: callsite_label,
+                samples: 0,
+                bytes_total: 0,
+            });
         row.samples = row.samples.saturating_add(count);
         row.bytes_total = row.bytes_total.saturating_add(bytes);
     }
@@ -693,10 +705,20 @@ fn print_callsite_table(rows: &[CallsiteRow], total_bytes: u64, top: usize) {
 
     println!(
         "  {:<label_w$}  {:>10}  {:>14}  {:>7}",
-        "callsite", "samples", "bytes", "bytes %",
+        "callsite",
+        "samples",
+        "bytes",
+        "bytes %",
         label_w = label_w
     );
-    println!("  {:-<label_w$}  {:->10}  {:->14}  {:->7}", "", "", "", "", label_w = label_w);
+    println!(
+        "  {:-<label_w$}  {:->10}  {:->14}  {:->7}",
+        "",
+        "",
+        "",
+        "",
+        label_w = label_w
+    );
 
     for row in rows.iter().take(top) {
         let truncated = if row.label.len() > label_w {
@@ -836,10 +858,7 @@ fn run_diff(
         .collect();
 
     // Union of span names present in either profile.
-    let mut all_names: Vec<&String> = before_by_name
-        .keys()
-        .chain(after_by_name.keys())
-        .collect();
+    let mut all_names: Vec<&String> = before_by_name.keys().chain(after_by_name.keys()).collect();
     all_names.sort();
     all_names.dedup();
 
@@ -970,7 +989,10 @@ fn render_diff_text(summary: &DiffSummary, regressions: &[&DiffRow], improvement
 
     println!("Allocation diff:");
     println!("  before:  {}", summary.before_path.display());
-    println!("           total {} (estimated)", format_bytes(summary.before_total));
+    println!(
+        "           total {} (estimated)",
+        format_bytes(summary.before_total)
+    );
     println!("  after:   {}", summary.after_path.display());
     println!(
         "           total {} (estimated)  Δ = {}  ({:+.2}%)",
@@ -978,10 +1000,7 @@ fn render_diff_text(summary: &DiffSummary, regressions: &[&DiffRow], improvement
         format_signed_bytes(total_delta),
         total_pct
     );
-    println!(
-        "  rate:    {}/alloc",
-        format_bytes(summary.rate_bytes)
-    );
+    println!("  rate:    {}/alloc", format_bytes(summary.rate_bytes));
     println!(
         "  filter:  show changes ≥ {} AND ≥ {:.2}%",
         format_bytes(summary.threshold_bytes),
@@ -995,10 +1014,7 @@ fn render_diff_text(summary: &DiffSummary, regressions: &[&DiffRow], improvement
 
     if summary.quiet_count > 0 {
         println!();
-        println!(
-            "{} span(s) suppressed by thresholds.",
-            summary.quiet_count
-        );
+        println!("{} span(s) suppressed by thresholds.", summary.quiet_count);
     }
 }
 
@@ -1007,16 +1023,29 @@ fn print_diff_section_text(title: &str, rows: &[&DiffRow]) {
         println!("{title}: none");
         return;
     }
-    let name_w = rows.iter().map(|r| r.name.len()).max().unwrap_or(20).max(20);
+    let name_w = rows
+        .iter()
+        .map(|r| r.name.len())
+        .max()
+        .unwrap_or(20)
+        .max(20);
     println!("{title}:");
     println!(
         "  {:<name_w$}  {:>12}  {:>12}  {:>12}  {:>8}",
-        "span", "before", "after", "Δ", "Δ%",
+        "span",
+        "before",
+        "after",
+        "Δ",
+        "Δ%",
         name_w = name_w
     );
     println!(
         "  {:-<name_w$}  {:->12}  {:->12}  {:->12}  {:->8}",
-        "", "", "", "", "",
+        "",
+        "",
+        "",
+        "",
+        "",
         name_w = name_w
     );
     for d in rows {
@@ -1137,7 +1166,7 @@ fn render_diff_json(
     after_profile: &proto::Profile,
     had_regressions: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     let kind_str = |k: DiffKind| -> &'static str {
         match k {
@@ -1215,16 +1244,8 @@ fn run_info(path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     // Total counts across all samples in the file (regular + synthetic).
     // Synthetic samples (parent-span markers) have count=0/bytes=0 so
     // they don't skew the totals.
-    let sample_count: i64 = profile
-        .sample
-        .iter()
-        .filter_map(|s| s.value.first())
-        .sum();
-    let total_bytes: i64 = profile
-        .sample
-        .iter()
-        .filter_map(|s| s.value.get(1))
-        .sum();
+    let sample_count: i64 = profile.sample.iter().filter_map(|s| s.value.first()).sum();
+    let total_bytes: i64 = profile.sample.iter().filter_map(|s| s.value.get(1)).sum();
 
     // Unique span names referenced by any sample.
     let span_name_key = string_index(&profile, "span_name");
@@ -1241,7 +1262,10 @@ fn run_info(path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     println!("File:            {}", path.display());
     println!("Sample rate:     {}/alloc", format_bytes(rate_bytes));
     println!("Total samples:   {sample_count}");
-    println!("Total bytes:     {}", format_bytes(total_bytes.max(0) as u64));
+    println!(
+        "Total bytes:     {}",
+        format_bytes(total_bytes.max(0) as u64)
+    );
     println!("Unique spans:    {}", unique_spans.len());
 
     if metadata.is_empty() {

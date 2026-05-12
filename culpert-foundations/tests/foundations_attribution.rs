@@ -9,8 +9,8 @@
 //! Single `#[test]` function because `culpert::install` is process-global.
 
 use culpert::{Config, Profile, SpanId, TrackingAllocator};
-use foundations::telemetry::TelemetryContext;
 use foundations::telemetry::tracing;
+use foundations::telemetry::TelemetryContext;
 use std::alloc::System;
 
 #[global_allocator]
@@ -89,8 +89,7 @@ fn end_to_end_attribution_through_foundations() {
     );
 
     // Sample counts should be similar order of magnitude.
-    let ratio =
-        (root_bytes.max(other_bytes)) as f64 / (root_bytes.min(other_bytes)).max(1) as f64;
+    let ratio = (root_bytes.max(other_bytes)) as f64 / (root_bytes.min(other_bytes)).max(1) as f64;
     assert!(
         ratio < 4.0,
         "root vs other differ by >4x: root={root_bytes} other={other_bytes}"

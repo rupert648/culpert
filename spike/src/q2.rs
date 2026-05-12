@@ -10,8 +10,8 @@
 //! drop the span and prove the snapshot survives.
 
 use foundations::reexports_for_macros::cf_rustracing::span::InspectableSpan;
-use foundations::telemetry::TelemetryContext;
 use foundations::telemetry::tracing::{self, rustracing_span};
+use foundations::telemetry::TelemetryContext;
 use std::sync::Arc;
 
 pub fn run() {

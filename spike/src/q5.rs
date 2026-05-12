@@ -11,11 +11,9 @@ use foundations::addr::ListenAddr;
 use foundations::service_info;
 use foundations::telemetry::reexports::http_body_util::{BodyExt, Full};
 use foundations::telemetry::reexports::hyper::body::Bytes;
-use foundations::telemetry::reexports::hyper::{Method, Response, StatusCode, header};
+use foundations::telemetry::reexports::hyper::{header, Method, Response, StatusCode};
 use foundations::telemetry::settings::TelemetrySettings;
-use foundations::telemetry::{
-    TelemetryConfig, TelemetryRouteBody, TelemetryServerRoute, init,
-};
+use foundations::telemetry::{init, TelemetryConfig, TelemetryRouteBody, TelemetryServerRoute};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -44,15 +42,16 @@ pub async fn run() {
         methods: vec![Method::GET],
         handler: Box::new(|_, _| {
             Box::pin(async move {
-                let resp: Result<Response<TelemetryRouteBody>, Infallible> = Ok(Response::builder()
-                    .status(StatusCode::OK)
-                    .header(header::CONTENT_TYPE, CONTENT_TYPE)
-                    .body(
-                        Full::from(Bytes::from_static(&BODY))
-                            .map_err(Into::into)
-                            .boxed(),
-                    )
-                    .unwrap());
+                let resp: Result<Response<TelemetryRouteBody>, Infallible> =
+                    Ok(Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, CONTENT_TYPE)
+                        .body(
+                            Full::from(Bytes::from_static(&BODY))
+                                .map_err(Into::into)
+                                .boxed(),
+                        )
+                        .unwrap());
                 resp
             })
         }),

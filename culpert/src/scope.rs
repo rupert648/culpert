@@ -26,8 +26,8 @@ use parking_lot::RwLock;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::num::NonZeroU64;
-use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::LazyLock;
 
 /// Global metadata for every span ever opened by [`enter`]. Grows
 /// monotonically over the process lifetime; long-running services that
@@ -133,8 +133,7 @@ impl SpanContext for LocalSpanContext {
         // resize window in `enter`) momentarily makes the cell
         // borrow-incompatible; we return None for that one sample instead
         // of panicking.
-        STACK
-            .with(|s| s.try_borrow().ok().and_then(|v| v.last().copied()))
+        STACK.with(|s| s.try_borrow().ok().and_then(|v| v.last().copied()))
     }
 
     fn metadata(&self, span: SpanId) -> Option<SpanMetadata> {

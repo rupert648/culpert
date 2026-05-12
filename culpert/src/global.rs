@@ -5,8 +5,8 @@
 use crate::aggregator::{self, Profile};
 use crate::config::Config;
 use crate::span::SpanContext;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 pub(crate) struct Profiler {
     pub(crate) config: Config,
