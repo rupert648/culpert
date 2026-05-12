@@ -1,0 +1,8 @@
+# Pin the toolchain so that `cfg_select!` (stabilised in 1.95, used in
+# culpert::stack_capture's frame-pointer dispatch) compiles cleanly on
+# CI and any other machine. rustup reads this file when invoked from
+# anywhere inside the workspace and installs the channel on demand.
+[toolchain]
+channel = "1.95"
+components = ["clippy", "rustfmt"]
+profile = "minimal"
