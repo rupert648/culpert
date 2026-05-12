@@ -64,6 +64,7 @@ pub mod mock;
 pub mod pprof;
 pub mod scope;
 pub mod span;
+pub mod stack_capture;
 
 mod aggregator;
 mod allocator;
@@ -103,7 +104,7 @@ mod debug {
 
 pub use aggregator::{Frame, Profile, ProfileEntry};
 pub use allocator::TrackingAllocator;
-pub use config::Config;
+pub use config::{Config, StackCaptureStrategy};
 pub use culpert_macros::span_fn;
 pub use global::{install, shutdown, snapshot};
 pub use mock::{MockSpanContext, MockSpanGuard};

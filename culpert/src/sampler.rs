@@ -9,7 +9,6 @@
 
 use crate::sample::RawSample;
 use crate::{global, thread_state};
-use smallvec::SmallVec;
 use std::cell::Cell;
 
 thread_local! {
@@ -109,23 +108,14 @@ fn do_observe(bytes: u64) {
     }
 
     let span = profiler.ctx.current_span();
-    let frames = capture_stack(profiler.config.stack_depth);
+    let frames = crate::stack_capture::capture(
+        profiler.config.stack_capture_strategy,
+        profiler.config.stack_depth,
+    );
 
     handle.lock().try_push(RawSample {
         span,
         bytes,
         frames,
     });
-}
-
-fn capture_stack(depth: usize) -> SmallVec<[usize; 32]> {
-    let mut out: SmallVec<[usize; 32]> = SmallVec::new();
-    backtrace::trace(|frame| {
-        if out.len() >= depth {
-            return false;
-        }
-        out.push(frame.ip() as usize);
-        true
-    });
-    out
 }

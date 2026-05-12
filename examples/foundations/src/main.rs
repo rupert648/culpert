@@ -42,6 +42,7 @@ async fn main() {
         rate_bytes: 4 * 1024,
         stack_depth: 32,
         buffer_capacity: 1 << 16,
+        ..Default::default()
     });
 
     // Drive the workload.

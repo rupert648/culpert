@@ -47,6 +47,7 @@ fn end_to_end_attribution_through_tracing() {
         rate_bytes: 4 * 1024,
         stack_depth: 16,
         buffer_capacity: 65_536,
+        ..Default::default()
     });
 
     // Two sibling spans.
