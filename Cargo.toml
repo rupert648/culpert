@@ -48,7 +48,14 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # culpert-cli deps
-clap = { version = "4", features = ["derive"] }
+# `env` lets clap args read from environment variables as fallbacks
+# (used for $CULPERT_ARCHIVE / $CULPERT_TOKEN / $GITHUB_SHA / etc. in
+# the `upload` and `pull` subcommands).
+clap = { version = "4", features = ["derive", "env"] }
+# Sync HTTP client for `culpert upload` / `culpert pull` against
+# culpert-archive. `rustls-tls` so we don't carry a native OpenSSL
+# dependency on CI runners.
+ureq = { version = "2", default-features = false, features = ["tls"] }
 
 # benches
 criterion = { version = "0.7", features = ["html_reports"] }

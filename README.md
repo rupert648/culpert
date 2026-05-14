@@ -232,6 +232,43 @@ pprof -tagfocus="span_name:json" -text /tmp/mock-axum.pb.gz
 pprof -http=:8090  /tmp/mock-axum.pb.gz   # interactive flame graph + source view
 ```
 
+### Persist profiles for CI — `culpert upload` / `culpert pull`
+
+For CI workflows you usually want last week's profiles to compare against.
+The companion [`culpert-archive`](https://github.com/rupert648/culpert-archive)
+Cloudflare Worker stores `.pb.gz` files keyed by commit SHA; the
+`upload` / `pull` subcommands of `culpert-cli` are its first-party
+client. Endpoint and token are picked up from environment variables
+(`CULPERT_ARCHIVE` / `CULPERT_TOKEN`), commit SHA / branch from
+`GITHUB_SHA` / `GITHUB_REF_NAME` so the GitHub Actions step body is
+short:
+
+```sh
+# Push the just-captured profile under this commit
+culpert upload /tmp/profile.pb.gz
+
+# Pull last build's main-branch profile as a baseline. --allow-missing
+# exits 0 (writing nothing) on 404 so the very first main run doesn't
+# fail the build.
+culpert pull --latest-of main -o /tmp/baseline.pb.gz --allow-missing
+
+# Diff. Markdown to $GITHUB_STEP_SUMMARY, plus a fail-gated text run.
+culpert diff /tmp/baseline.pb.gz /tmp/profile.pb.gz \
+  --format markdown >> "$GITHUB_STEP_SUMMARY"
+culpert diff /tmp/baseline.pb.gz /tmp/profile.pb.gz \
+  --threshold-bytes 1048576 --threshold-pct 10   # exit 1 on regression
+```
+
+[culpert's own `.github/workflows/rust.yml`](.github/workflows/rust.yml)
+demonstrates the whole flow against example-macros — see the `profile`
+job. Currently warn-only (`--no-fail`) until enough main-branch runs
+have accumulated to make gating meaningful.
+
+The worker never parses the pprof bytes — it's dumb storage. Sample
+attribution, Bernstein correction, threshold logic all run in this CLI.
+See [culpert-archive's README](https://github.com/rupert648/culpert-archive)
+for the deploy recipe and HTTP surface.
+
 ## Comparison
 
 | | culpert | foundations `MemoryProfiler` | jemalloc heap prof | dhat | bytehound | heaptrack |

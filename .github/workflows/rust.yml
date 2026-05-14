@@ -10,10 +10,9 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Build, lint, fmt, test. The "is the code OK" job.
   build:
-
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v4
     - name: cargo fmt --check
@@ -28,3 +27,81 @@ jobs:
       run: cargo clippy --workspace --all-targets -- -D warnings
     - name: Run tests
       run: cargo test --workspace --verbose
+
+  # Capture a profile, push it to culpert-archive, diff against the
+  # latest baseline on main. Demonstrates the full
+  # "capture → upload → pull baseline → diff → PR comment" flow
+  # described in `culpert-archive`'s README.
+  #
+  # Currently in WARN-ONLY mode: `culpert diff --no-fail` posts the
+  # markdown summary but doesn't fail the build on regression. Drop
+  # `--no-fail` once a few weeks of green main-branch runs have
+  # established a stable baseline that's worth gating on.
+  #
+  # Requirements:
+  #   - Repo VAR  `CULPERT_ARCHIVE` = the deployed worker URL,
+  #     e.g. https://culpert-archive.<your-subdomain>.workers.dev
+  #   - Repo SECRET `CULPERT_TOKEN` = the AUTH_TOKEN you set via
+  #     `wrangler secret put AUTH_TOKEN` on the archive.
+  profile:
+    runs-on: ubuntu-latest
+    needs: build  # don't bother profiling a broken build
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build culpert-cli + example-macros
+      # Release for realistic allocation patterns. The build job above
+      # already ran a debug build, so this incrementally adds release
+      # artefacts on top of cargo's cache (mostly LLVM time).
+      run: cargo build --release -p culpert-cli -p example-macros
+
+    - name: Capture profile
+      # example-macros runs 2000 iterations of `handle_request` in
+      # under a second and writes /tmp/example-macros.pb.gz.
+      run: ./target/release/example-macros
+
+    - name: Show captured profile metadata
+      # `culpert info` confirms the artefact looks sensible in the run
+      # log: sample rate, sample count, total bytes, any embedded
+      # metadata. Doesn't fail on anything.
+      run: ./target/release/culpert info /tmp/example-macros.pb.gz
+
+    - name: Upload to culpert-archive
+      env:
+        CULPERT_ARCHIVE: ${{ vars.CULPERT_ARCHIVE }}
+        CULPERT_TOKEN: ${{ secrets.CULPERT_TOKEN }}
+      # GITHUB_SHA / GITHUB_REF_NAME are set by Actions automatically,
+      # picked up via clap's env attribute on the relevant args.
+      run: ./target/release/culpert upload /tmp/example-macros.pb.gz
+
+    - name: Pull latest main as baseline
+      env:
+        CULPERT_ARCHIVE: ${{ vars.CULPERT_ARCHIVE }}
+        CULPERT_TOKEN: ${{ secrets.CULPERT_TOKEN }}
+      # --allow-missing returns 0 (writing nothing) on 404, so the very
+      # first run on main — which has no prior baseline — doesn't fail
+      # the build. The diff step below branches on whether the file
+      # exists.
+      run: |
+        ./target/release/culpert pull \
+          --latest-of main \
+          -o /tmp/baseline.pb.gz \
+          --allow-missing
+
+    - name: Diff against baseline → step summary
+      # Markdown to $GITHUB_STEP_SUMMARY shows up nicely on the run
+      # page. --no-fail keeps this job green during the warm-up period.
+      run: |
+        if [ -s /tmp/baseline.pb.gz ]; then
+          ./target/release/culpert diff \
+            /tmp/baseline.pb.gz /tmp/example-macros.pb.gz \
+            --format markdown --no-fail >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          ./target/release/culpert diff \
+            /tmp/baseline.pb.gz /tmp/example-macros.pb.gz \
+            --no-fail
+        else
+          echo "## culpert allocation profile" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "_No baseline available yet — this is the first profile for \`main\`._" >> "$GITHUB_STEP_SUMMARY"
+        fi

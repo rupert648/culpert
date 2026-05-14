@@ -16,6 +16,8 @@
 //! comments (a GitHub Action can write it straight into
 //! `$GITHUB_STEP_SUMMARY`).
 
+mod archive;
+
 use clap::{Parser, Subcommand};
 use culpert::pprof::{self, proto};
 use std::collections::HashMap;
@@ -107,6 +109,76 @@ enum Cmd {
         /// Path to the .pb.gz profile file.
         file: PathBuf,
     },
+
+    /// Upload a profile to a culpert-archive instance, keyed by commit
+    /// SHA. Designed for CI: capture a profile right after a build,
+    /// upload it under `$GITHUB_SHA` so the next run on this branch
+    /// has a baseline to diff against.
+    ///
+    /// Endpoint and token can come from env (`CULPERT_ARCHIVE` /
+    /// `CULPERT_TOKEN`) so the GitHub Actions step body is short.
+    Upload {
+        /// Path to the .pb.gz profile to upload.
+        file: PathBuf,
+
+        /// culpert-archive base URL, e.g. https://culpert-archive.example.workers.dev
+        #[arg(long, env = "CULPERT_ARCHIVE")]
+        endpoint: String,
+
+        /// Bearer token (the `AUTH_TOKEN` secret set on the archive).
+        #[arg(long, env = "CULPERT_TOKEN")]
+        token: String,
+
+        /// Commit SHA to key this upload by. Required.
+        #[arg(long, value_name = "SHA", env = "GITHUB_SHA")]
+        commit_sha: String,
+
+        /// Branch the profile was captured on. Optional but strongly
+        /// recommended — the archive uses it to answer
+        /// `pull --latest-of <branch>` later.
+        #[arg(long, value_name = "NAME", env = "GITHUB_REF_NAME")]
+        branch: Option<String>,
+    },
+
+    /// Pull a profile from a culpert-archive instance, either by exact
+    /// commit SHA or by "latest on branch". Writes the raw `.pb.gz`
+    /// bytes to a file (`-o`) or stdout.
+    ///
+    /// Typical CI use:
+    ///
+    /// ```sh
+    /// culpert pull --latest-of main -o /tmp/baseline.pb.gz --allow-missing
+    /// ```
+    Pull {
+        /// culpert-archive base URL.
+        #[arg(long, env = "CULPERT_ARCHIVE")]
+        endpoint: String,
+
+        /// Bearer token.
+        #[arg(long, env = "CULPERT_TOKEN")]
+        token: String,
+
+        /// Pull by exact commit SHA. Mutually exclusive with `--latest-of`.
+        #[arg(long, value_name = "SHA", conflicts_with = "latest_of")]
+        sha: Option<String>,
+
+        /// Pull the latest profile on the named branch. Mutually
+        /// exclusive with `--sha`.
+        #[arg(long, value_name = "BRANCH")]
+        latest_of: Option<String>,
+
+        /// Write the body to this path. Without it, the bytes go to
+        /// stdout (useful for `culpert pull ... | culpert info /dev/stdin`).
+        #[arg(short = 'o', long, value_name = "PATH")]
+        output: Option<PathBuf>,
+
+        /// Treat HTTP 404 as success (writing nothing). For the common
+        /// CI case where the very first run on `main` has no baseline
+        /// yet — the diff step can then `[ -f baseline.pb.gz ] && ...`
+        /// without failing the build.
+        #[arg(long)]
+        allow_missing: bool,
+    },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -157,6 +229,28 @@ fn main() {
             },
         ),
         Cmd::Info { file } => run_info(&file).map(|()| 0),
+        Cmd::Upload {
+            file,
+            endpoint,
+            token,
+            commit_sha,
+            branch,
+        } => run_upload(&file, &endpoint, &token, &commit_sha, branch.as_deref()).map(|()| 0),
+        Cmd::Pull {
+            endpoint,
+            token,
+            sha,
+            latest_of,
+            output,
+            allow_missing,
+        } => run_pull(
+            &endpoint,
+            &token,
+            sha.as_deref(),
+            latest_of.as_deref(),
+            output.as_ref(),
+            allow_missing,
+        ),
     };
     match res {
         Err(e) => {
@@ -1284,4 +1378,70 @@ fn run_info(path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+// ---- archive integration -----------------------------------------------
+//
+// `culpert upload` / `culpert pull` — thin wrappers over `archive::*`
+// that translate CLI args into the right call shape, print the response,
+// and translate the result into the right exit code.
+
+fn run_upload(
+    file: &PathBuf,
+    endpoint: &str,
+    token: &str,
+    commit_sha: &str,
+    branch: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ep = archive::Endpoint {
+        url: endpoint.to_string(),
+        token: token.to_string(),
+    };
+    let response = archive::upload(&ep, file, commit_sha, branch)?;
+    println!("{response}");
+    eprintln!(
+        "uploaded {} as commit {commit_sha}{}",
+        file.display(),
+        match branch {
+            Some(b) => format!(" on branch {b}"),
+            None => String::new(),
+        }
+    );
+    Ok(())
+}
+
+fn run_pull(
+    endpoint: &str,
+    token: &str,
+    sha: Option<&str>,
+    latest_of: Option<&str>,
+    output: Option<&PathBuf>,
+    allow_missing: bool,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    let target = match (sha, latest_of) {
+        (Some(s), None) => archive::PullTarget::BySha(s.to_string()),
+        (None, Some(b)) => archive::PullTarget::LatestOf(b.to_string()),
+        (Some(_), Some(_)) => {
+            return Err("pass only one of --sha or --latest-of".into());
+        }
+        (None, None) => {
+            return Err("pass one of --sha or --latest-of".into());
+        }
+    };
+
+    let ep = archive::Endpoint {
+        url: endpoint.to_string(),
+        token: token.to_string(),
+    };
+    let found = archive::pull(&ep, &target, output, allow_missing)?;
+    if !found {
+        // --allow-missing path: exit 0 but make the absence visible.
+        // The CI step that runs `culpert diff` after this can branch on
+        // `[ -f baseline.pb.gz ]` and skip cleanly.
+        return Ok(0);
+    }
+    if let Some(path) = output {
+        eprintln!("pulled to {}", path.display());
+    }
+    Ok(0)
 }
