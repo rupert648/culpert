@@ -1,0 +1,220 @@
+name: culpert-diff
+description: >
+  Upload a culpert .pb.gz allocation profile to a `culpert-archive`
+  instance, diff it against the latest baseline on the configured
+  branch (default `main`), post the markdown diff as a sticky PR
+  comment, and optionally fail the build on regression.
+
+# This action assumes the caller has already produced the profile to
+# diff (your service's bench harness, a `culpert::install` + snapshot
+# dump, an example binary — whatever). The action handles everything
+# downstream of that single file.
+#
+# Drop-in usage:
+#
+#   - uses: rupert648/culpert/.github/actions/culpert-diff@main
+#     with:
+#       archive-url:   ${{ vars.CULPERT_ARCHIVE }}
+#       archive-token: ${{ secrets.CULPERT_TOKEN }}
+#       profile:       /tmp/my-profile.pb.gz
+#
+# Outputs land in:
+#   - The workflow run's Summary tab (always).
+#   - A sticky PR comment (on `pull_request` events).
+#   - A red ❌ on the job if `fail-on-regression: true` and there's a
+#     regression past the thresholds.
+
+inputs:
+  archive-url:
+    description: >
+      culpert-archive base URL, e.g.
+      `https://culpert-archive.example.workers.dev`. No trailing slash.
+      See https://github.com/rupert648/culpert-archive for hosting your own
+    required: true
+
+  archive-token:
+    description: >
+      Bearer token for the archive (the `AUTH_TOKEN` you set via
+      `wrangler secret put AUTH_TOKEN` on your culpert-archive instance). Store as a repo secret named
+      e.g. `CULPERT_TOKEN` and forward it from the caller's workflow
+      via the standard `secrets.CULPERT_TOKEN` reference.
+    required: true
+
+  profile:
+    description: >
+      Path to the `.pb.gz` profile this run produced. The action
+      doesn't capture it for you — you produce it in an earlier step.
+    required: true
+
+  culpert-cli:
+    description: >
+      Path to the `culpert` CLI binary (the one from
+      [culpert-cli](https://crates.io/crates/culpert-cli)). Default
+      assumes it's on `$PATH`; CI typically builds it from source in
+      an earlier step and points here at the `target/release` output.
+    required: false
+    default: culpert
+
+  baseline-branch:
+    description: >
+      Which branch's latest profile to diff against. PR workflows
+      usually want this to be the target branch (default `main`);
+      tag-publish workflows might want a previous tag's branch.
+    required: false
+    default: main
+
+  threshold-bytes:
+    description: >
+      Absolute byte threshold for `culpert diff`. Rows whose absolute
+      delta is below this are folded into the "quiet" count and don't
+      appear in the report or count as regressions. Default 1 MiB.
+    required: false
+    default: "1048576"
+
+  threshold-pct:
+    description: >
+      Percent threshold for `culpert diff`. Combined with
+      `threshold-bytes` via AND — both must pass for a row to surface
+      as a regression. Default 10.0.
+    required: false
+    default: "10.0"
+
+  fail-on-regression:
+    description: >
+      If "true", the action exits 1 (failing the job) when any row
+      classifies as a regression past both thresholds. Default
+      "false" — recommended for the first few weeks of CI use,
+      flip to "true" once you have a stable baseline.
+    required: false
+    default: "false"
+
+  sticky-comment:
+    description: >
+      If "true" (default), posts a sticky comment on `pull_request`
+      events. The comment is edited in-place across pushes to the
+      same PR — no spam. No-op on `push` events.
+    required: false
+    default: "true"
+
+  sticky-header:
+    description: >
+      Discriminator for the sticky comment so different jobs in the
+      same workflow can keep separate comments (e.g. one per service).
+      Default `culpert-diff`.
+    required: false
+    default: culpert-diff
+
+  commit-sha:
+    description: >
+      Commit SHA the uploaded profile is keyed by. Default: the PR's
+      head commit on `pull_request` events, `github.sha` on `push`
+      events. Override only if you're keying off something other than
+      the GitHub-supplied SHA.
+    required: false
+    default: ""
+
+  branch:
+    description: >
+      Branch the uploaded profile is recorded under. Default: the PR's
+      source branch on `pull_request` events, `github.ref_name` on
+      `push` events. Note that on `pull_request` events
+      `github.ref_name` is `<pr-number>/merge`, NOT the source branch
+      — this default does the right thing.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    # Common env for every culpert-cli call below.
+    #
+    # The `||` chains pick the right value for each event type without
+    # the caller having to think about it. See `branch` / `commit-sha`
+    # input docs above for why the `github.head_ref` / `pull_request.head.sha`
+    # branches matter on `pull_request` events.
+    - name: Inspect captured profile
+      shell: bash
+      env:
+        CULPERT_ARCHIVE: ${{ inputs.archive-url }}
+        CULPERT_TOKEN: ${{ inputs.archive-token }}
+      run: |
+        ${{ inputs.culpert-cli }} info "${{ inputs.profile }}"
+
+    # Pull happens BEFORE upload — on a `push` to baseline-branch the
+    # alternative ordering would return the just-uploaded profile and
+    # diff would be self-vs-self. See the rationale in the workflow
+    # in the culpert repo if you want the longer version.
+    - name: Pull baseline from culpert-archive
+      shell: bash
+      env:
+        CULPERT_ARCHIVE: ${{ inputs.archive-url }}
+        CULPERT_TOKEN: ${{ inputs.archive-token }}
+      run: |
+        ${{ inputs.culpert-cli }} pull \
+          --latest-of "${{ inputs.baseline-branch }}" \
+          -o /tmp/culpert-baseline.pb.gz \
+          --allow-missing
+
+    # Always-on diff. Markdown goes both to a file (for the sticky
+    # comment step) and into $GITHUB_STEP_SUMMARY (always visible on
+    # the workflow run page). The text diff goes to the job log so the
+    # numbers are searchable without leaving Actions.
+    - name: Diff against baseline
+      shell: bash
+      run: |
+        if [ -s /tmp/culpert-baseline.pb.gz ]; then
+          ${{ inputs.culpert-cli }} diff \
+            /tmp/culpert-baseline.pb.gz "${{ inputs.profile }}" \
+            --format markdown \
+            --threshold-bytes "${{ inputs.threshold-bytes }}" \
+            --threshold-pct "${{ inputs.threshold-pct }}" \
+            --no-fail > /tmp/culpert-diff.md
+
+          ${{ inputs.culpert-cli }} diff \
+            /tmp/culpert-baseline.pb.gz "${{ inputs.profile }}" \
+            --threshold-bytes "${{ inputs.threshold-bytes }}" \
+            --threshold-pct "${{ inputs.threshold-pct }}" \
+            --no-fail
+        else
+          {
+            echo "## culpert allocation profile"
+            echo
+            echo "_No baseline available yet on \`${{ inputs.baseline-branch }}\` — this is the first profile uploaded._"
+          } > /tmp/culpert-diff.md
+        fi
+
+        cat /tmp/culpert-diff.md >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Post sticky comment on the PR
+      if: github.event_name == 'pull_request' && inputs.sticky-comment == 'true'
+      uses: marocchino/sticky-pull-request-comment@v2
+      with:
+        header: ${{ inputs.sticky-header }}
+        path: /tmp/culpert-diff.md
+
+    # Regression gate. Re-runs the diff with --no-fail OFF so the exit
+    # code drives the step (and the job) red. Skipped entirely unless
+    # the caller opts in; the warn-only default is much friendlier
+    # while a baseline is being established.
+    - name: Gate on regression
+      if: inputs.fail-on-regression == 'true'
+      shell: bash
+      run: |
+        if [ -s /tmp/culpert-baseline.pb.gz ]; then
+          ${{ inputs.culpert-cli }} diff \
+            /tmp/culpert-baseline.pb.gz "${{ inputs.profile }}" \
+            --threshold-bytes "${{ inputs.threshold-bytes }}" \
+            --threshold-pct "${{ inputs.threshold-pct }}"
+        fi
+
+    # Upload happens last so the pull above sees the previous build's
+    # profile, not this build's.
+    - name: Upload current profile to culpert-archive
+      shell: bash
+      env:
+        CULPERT_ARCHIVE: ${{ inputs.archive-url }}
+        CULPERT_TOKEN: ${{ inputs.archive-token }}
+        GITHUB_SHA: ${{ inputs.commit-sha || github.event.pull_request.head.sha || github.sha }}
+        GITHUB_REF_NAME: ${{ inputs.branch || github.head_ref || github.ref_name }}
+      run: |
+        ${{ inputs.culpert-cli }} upload "${{ inputs.profile }}"
