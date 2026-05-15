@@ -29,13 +29,15 @@ inputs:
     description: >
       culpert-archive base URL, e.g.
       `https://culpert-archive.example.workers.dev`. No trailing slash.
+      See https://github.com/rupert648/culpert-archive for hosting your own
     required: true
 
   archive-token:
     description: >
       Bearer token for the archive (the `AUTH_TOKEN` you set via
-      `wrangler secret put AUTH_TOKEN`). Store as a repo secret and
-      reference as `${{ secrets.CULPERT_TOKEN }}`.
+      `wrangler secret put AUTH_TOKEN` on your culpert-archive instance). Store as a repo secret named
+      e.g. `CULPERT_TOKEN` and forward it from the caller's workflow
+      via the standard `secrets.CULPERT_TOKEN` reference.
     required: true
 
   profile:

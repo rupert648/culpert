@@ -10,8 +10,46 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Lint the workflows themselves. Cheap and fast; catches syntax /
+  # expression errors before any real build runs.
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: actionlint (workflows)
+      # actionlint is workflow-focused; doesn't natively understand
+      # `action.yml` schema (treats it as a malformed workflow).
+      # See the bash check below for action.yml-specific gotchas.
+      uses: docker://rhysd/actionlint:1.7.7
+      with:
+        args: -color
+    - name: composite actions can't reference secrets / vars
+      # GitHub evaluates `${{ ... }}` template expressions in every YAML
+      # string value in an action.yml, including the documentation
+      # `description:` fields. Composite actions never see `secrets.*`
+      # or `vars.*` (caller must forward these as inputs), so any
+      # reference to them is a "Unrecognized named-value" error at
+      # load time — usually because someone copied a usage example
+      # from the README into a description.
+      #
+      # `github.*`, `inputs.*`, `steps.*`, `env.*` and `runner.*` are
+      # all legitimately usable inside `runs:` step bodies and aren't
+      # flagged here.
+      run: |
+        # `^[^#]*` skips YAML comment lines (which GH doesn't evaluate
+        # — see the leading documentation block at the top of action.yml
+        # which legitimately shows expression usage in caller-side
+        # workflows).
+        bad=$(grep -nE '^[^#]*\$\{\{ *(secrets|vars)\.' .github/actions/*/action.yml || true)
+        if [ -n "$bad" ]; then
+          echo "::error::action.yml fields can't reference secrets.* or vars.* — write them as prose."
+          echo "$bad"
+          exit 1
+        fi
+
   # Build, lint, fmt, test. The "is the code OK" job.
   build:
+    needs: actionlint
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
