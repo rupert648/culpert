@@ -7,12 +7,18 @@ description: >
 
 # This action assumes the caller has already produced the profile to
 # diff (your service's bench harness, a `culpert::install` + snapshot
-# dump, an example binary — whatever). The action handles everything
-# downstream of that single file.
+# dump, an example binary — whatever) AND installed the culpert CLI.
+# The action handles everything downstream of that.
 #
 # Drop-in usage:
 #
-#   - uses: rupert648/culpert/.github/actions/culpert-diff@main
+#   - name: Install culpert CLI
+#     run: cargo install --locked culpert-cli
+#
+#   - name: Capture profile
+#     run: ./run-my-bench > /tmp/my-profile.pb.gz
+#
+#   - uses: rupert648/culpert/.github/actions/culpert-diff@v0.1.0
 #     with:
 #       archive-url:   ${{ vars.CULPERT_ARCHIVE }}
 #       archive-token: ${{ secrets.CULPERT_TOKEN }}
@@ -50,8 +56,12 @@ inputs:
     description: >
       Path to the `culpert` CLI binary (the one from
       [culpert-cli](https://crates.io/crates/culpert-cli)). Default
-      assumes it's on `$PATH`; CI typically builds it from source in
-      an earlier step and points here at the `target/release` output.
+      assumes it's on `$PATH` — the canonical recipe is `cargo install
+      --locked culpert-cli` in an earlier step, which lands the binary
+      in `~/.cargo/bin/culpert` (already on `$PATH` on GitHub runners).
+      Override if you're building from source in the same workflow
+      (e.g. testing changes to culpert itself before publishing) by
+      pointing here at the `target/release/culpert` path.
     required: false
     default: culpert
 

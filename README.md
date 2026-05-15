@@ -18,12 +18,30 @@ Three integration paths — pick whichever matches your service:
 | The [`tracing`](https://crates.io/crates/tracing) crate | `culpert-tracing` | Compose a `tracing_subscriber::Layer` into your subscriber stack. Existing `#[tracing::instrument]` annotations become attribution keys. |
 | Neither, or you want attribution independent of trace sampling | `culpert::scope` + `#[culpert::span_fn]` | One macro on the functions you want attributed. No external tracer. |
 
-**Status:** pre-release. v0.1 (foundations integration + pprof + CLI) and
-v0.2 in-flight work (hierarchy, `diff`, tracing adapter, sampling-independent
-attribution) all on `main`; not yet on crates.io. See [`plan.md`](plan.md)
-for the design, [`notes.md`](notes.md) for the Phase 0 research verdicts,
-[`CHANGELOG.md`](CHANGELOG.md) for what's landed so far, and
-[`ROADMAP.md`](ROADMAP.md) for what's planned.
+**Status:** `0.1.0` on crates.io. Pre-1.0 — API may break in minor
+releases. See [`plan.md`](plan.md) for the design, [`notes.md`](notes.md)
+for the Phase 0 research verdicts, [`CHANGELOG.md`](CHANGELOG.md) for
+release notes, and [`ROADMAP.md`](ROADMAP.md) for what's next.
+
+## Install
+
+Library:
+
+```sh
+cargo add culpert                # core
+cargo add culpert-foundations    # if your service uses foundations
+cargo add culpert-tracing        # if your service uses the tracing crate
+```
+
+`culpert-macros` is re-exported by `culpert` (don't depend on it directly).
+
+CLI:
+
+```sh
+cargo install --locked culpert-cli
+# → installs the `culpert` binary into ~/.cargo/bin
+culpert --help
+```
 
 ## Quickstart — standalone (`#[culpert::span_fn]`)
 

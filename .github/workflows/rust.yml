@@ -90,11 +90,16 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Build culpert-cli + example-macros
-      # Release for realistic allocation patterns. The build job above
-      # already ran a debug build, so this incrementally adds release
-      # artefacts on top of cargo's cache (mostly LLVM time).
-      run: cargo build --release -p culpert-cli -p example-macros
+    - name: Install culpert CLI from crates.io
+      # Now that culpert-cli is published, external users would do this
+      # too. `cargo install --locked` uses the Cargo.lock from the
+      # crate's source dir so the build is reproducible.
+      run: cargo install --locked culpert-cli
+
+    - name: Build example-macros
+      # Workload-specific; not on crates.io. Release for realistic
+      # allocation patterns.
+      run: cargo build --release -p example-macros
 
     - name: Capture profile
       # example-macros runs 2000 iterations of `handle_request` in
@@ -104,14 +109,16 @@ jobs:
     # The composite action handles everything downstream of the
     # captured profile: pull baseline → diff → step summary → sticky
     # PR comment → upload as the new baseline. Same action external
-    # users would invoke against their own service profiles.
+    # users would invoke against their own service profiles. With
+    # culpert installed to ~/.cargo/bin (on $PATH after the install
+    # step above), the action's `culpert-cli` default of "culpert"
+    # works as-is.
     - name: culpert diff against main
       uses: ./.github/actions/culpert-diff
       with:
         archive-url:   ${{ vars.CULPERT_ARCHIVE }}
         archive-token: ${{ secrets.CULPERT_TOKEN }}
         profile:       /tmp/example-macros.pb.gz
-        culpert-cli:   ./target/release/culpert
         # TODO: flip to "true" once main has a few weeks of stable
         # baselines and any flagged regressions are real signal.
         fail-on-regression: "false"

@@ -6,8 +6,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Pre-release. Everything below will become the `0.1.0` entry on first publish
-to crates.io. Until then, depend on this project from a git URL.
+_Nothing yet — the next bump moves out of 0.1.0._
+
+## [0.1.0] — 2026-05-15
+
+First publish to crates.io. Five crates land at the same version:
+`culpert`, `culpert-macros`, `culpert-foundations`, `culpert-tracing`,
+`culpert-cli`. The CLI is installable via `cargo install --locked
+culpert-cli`; libraries via `cargo add culpert` (plus the matching
+adapter if you use foundations or tracing).
+
+This release rolls up everything described as "v0.1" and "v0.2" in
+the dev history below. Headlines: per-span heap-allocation profiling
+with `#[culpert::span_fn]` / foundations / tracing adapters,
+geometric sampling with Bernstein-corrected unbiased totals,
+frame-pointer stack capture, the `culpert` CLI with `report` / `diff`
+/ `info` / `upload` / `pull` subcommands, and a [`culpert-archive`
+companion worker](https://github.com/rupert648/culpert-archive)
+plus a [composite GitHub
+Action](.github/actions/culpert-diff/action.yml) for CI-PR-comment
+diffs.
 
 ### Added in v0.2 (in-flight on `main`)
 
