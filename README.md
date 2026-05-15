@@ -41,6 +41,12 @@ CLI:
 cargo install --locked culpert-cli
 # → installs the `culpert` binary into ~/.cargo/bin
 culpert --help
+
+# Optional feature for talking to a culpert-archive instance that
+# sits behind Cloudflare Access — adds --cf-access-client-id /
+# --cf-access-client-secret flags (with CF_ACCESS_CLIENT_ID /
+# CF_ACCESS_CLIENT_SECRET env-var fallbacks) to `upload` / `pull`:
+cargo install --locked --features cloudflare-access culpert-cli
 ```
 
 ## Quickstart — standalone (`#[culpert::span_fn]`)

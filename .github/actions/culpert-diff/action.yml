@@ -133,6 +133,25 @@ inputs:
     required: false
     default: ""
 
+  access-client-id:
+    description: >
+      Cloudflare Access service-token Client ID, for archive instances
+      that sit behind Cloudflare Access (typical for internal-only
+      deployments). Forwarded to every `culpert-cli` invocation as the
+      `CF_ACCESS_CLIENT_ID` env var. Must be paired with
+      `access-client-secret`. When either is set, the action installs
+      `culpert-cli` with `--features cloudflare-access` so the binary
+      knows how to send the Access headers.
+    required: false
+    default: ""
+
+  access-client-secret:
+    description: >
+      Cloudflare Access service-token Client Secret. See
+      `access-client-id` for the full story.
+    required: false
+    default: ""
+
 runs:
   using: composite
   steps:
@@ -159,6 +178,12 @@ runs:
       env:
         CULPERT_ARCHIVE: ${{ inputs.archive-url }}
         CULPERT_TOKEN: ${{ inputs.archive-token }}
+        # Access service-token headers. Read by culpert-cli when built
+        # with `--features cloudflare-access`. Empty / unset on archives
+        # without Access in front (the binary just doesn't send the
+        # headers).
+        CF_ACCESS_CLIENT_ID: ${{ inputs.access-client-id }}
+        CF_ACCESS_CLIENT_SECRET: ${{ inputs.access-client-secret }}
       run: |
         ${{ inputs.culpert-cli }} pull \
           --latest-of "${{ inputs.baseline-branch }}" \
@@ -226,5 +251,8 @@ runs:
         CULPERT_TOKEN: ${{ inputs.archive-token }}
         GITHUB_SHA: ${{ inputs.commit-sha || github.event.pull_request.head.sha || github.sha }}
         GITHUB_REF_NAME: ${{ inputs.branch || github.head_ref || github.ref_name }}
+        # See pull-step env above for the Access-headers context.
+        CF_ACCESS_CLIENT_ID: ${{ inputs.access-client-id }}
+        CF_ACCESS_CLIENT_SECRET: ${{ inputs.access-client-secret }}
       run: |
         ${{ inputs.culpert-cli }} upload "${{ inputs.profile }}"

@@ -138,6 +138,29 @@ enum Cmd {
         /// `pull --latest-of <branch>` later.
         #[arg(long, value_name = "NAME", env = "GITHUB_REF_NAME")]
         branch: Option<String>,
+
+        /// Cloudflare Access service-token Client ID. Sent as the
+        /// `CF-Access-Client-Id` header when contacting an archive
+        /// instance behind Cloudflare Access. Both this and
+        /// `--cf-access-client-secret` must be set (or neither — the
+        /// CLI errors at parse time if only one is provided).
+        #[cfg(feature = "cloudflare-access")]
+        #[arg(
+            long,
+            env = "CF_ACCESS_CLIENT_ID",
+            requires = "cf_access_client_secret"
+        )]
+        cf_access_client_id: Option<String>,
+
+        /// Cloudflare Access service-token Client Secret. See
+        /// `--cf-access-client-id`.
+        #[cfg(feature = "cloudflare-access")]
+        #[arg(
+            long,
+            env = "CF_ACCESS_CLIENT_SECRET",
+            requires = "cf_access_client_id"
+        )]
+        cf_access_client_secret: Option<String>,
     },
 
     /// Pull a profile from a culpert-archive instance, either by exact
@@ -178,6 +201,26 @@ enum Cmd {
         /// without failing the build.
         #[arg(long)]
         allow_missing: bool,
+
+        /// Cloudflare Access service-token Client ID. See `culpert
+        /// upload --help` for the full explanation; same shape here.
+        #[cfg(feature = "cloudflare-access")]
+        #[arg(
+            long,
+            env = "CF_ACCESS_CLIENT_ID",
+            requires = "cf_access_client_secret"
+        )]
+        cf_access_client_id: Option<String>,
+
+        /// Cloudflare Access service-token Client Secret. See
+        /// `--cf-access-client-id`.
+        #[cfg(feature = "cloudflare-access")]
+        #[arg(
+            long,
+            env = "CF_ACCESS_CLIENT_SECRET",
+            requires = "cf_access_client_id"
+        )]
+        cf_access_client_secret: Option<String>,
     },
 }
 
@@ -235,7 +278,27 @@ fn main() {
             token,
             commit_sha,
             branch,
-        } => run_upload(&file, &endpoint, &token, &commit_sha, branch.as_deref()).map(|()| 0),
+            #[cfg(feature = "cloudflare-access")]
+            cf_access_client_id,
+            #[cfg(feature = "cloudflare-access")]
+            cf_access_client_secret,
+        } => {
+            let cf_access = build_cf_access(
+                #[cfg(feature = "cloudflare-access")]
+                cf_access_client_id,
+                #[cfg(feature = "cloudflare-access")]
+                cf_access_client_secret,
+            );
+            run_upload(
+                &file,
+                &endpoint,
+                &token,
+                &commit_sha,
+                branch.as_deref(),
+                cf_access,
+            )
+            .map(|()| 0)
+        }
         Cmd::Pull {
             endpoint,
             token,
@@ -243,14 +306,27 @@ fn main() {
             latest_of,
             output,
             allow_missing,
-        } => run_pull(
-            &endpoint,
-            &token,
-            sha.as_deref(),
-            latest_of.as_deref(),
-            output.as_ref(),
-            allow_missing,
-        ),
+            #[cfg(feature = "cloudflare-access")]
+            cf_access_client_id,
+            #[cfg(feature = "cloudflare-access")]
+            cf_access_client_secret,
+        } => {
+            let cf_access = build_cf_access(
+                #[cfg(feature = "cloudflare-access")]
+                cf_access_client_id,
+                #[cfg(feature = "cloudflare-access")]
+                cf_access_client_secret,
+            );
+            run_pull(
+                &endpoint,
+                &token,
+                sha.as_deref(),
+                latest_of.as_deref(),
+                output.as_ref(),
+                allow_missing,
+                cf_access,
+            )
+        }
     };
     match res {
         Err(e) => {
@@ -1386,16 +1462,45 @@ fn run_info(path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
 // that translate CLI args into the right call shape, print the response,
 // and translate the result into the right exit code.
 
+/// Compose an optional [`archive::CfAccess`] from the two CLI flags.
+/// When the `cloudflare-access` feature isn't built in, both arguments
+/// are absent and the function just returns `None`.
+///
+/// Clap enforces "both or neither" via the `requires =` attribute on
+/// each flag, so by the time we get here we either have a complete
+/// pair or no values at all.
+fn build_cf_access(
+    #[cfg(feature = "cloudflare-access")] client_id: Option<String>,
+    #[cfg(feature = "cloudflare-access")] client_secret: Option<String>,
+) -> Option<archive::CfAccess> {
+    #[cfg(feature = "cloudflare-access")]
+    {
+        match (client_id, client_secret) {
+            (Some(client_id), Some(client_secret)) => Some(archive::CfAccess {
+                client_id,
+                client_secret,
+            }),
+            _ => None,
+        }
+    }
+    #[cfg(not(feature = "cloudflare-access"))]
+    {
+        None
+    }
+}
+
 fn run_upload(
     file: &PathBuf,
     endpoint: &str,
     token: &str,
     commit_sha: &str,
     branch: Option<&str>,
+    cf_access: Option<archive::CfAccess>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ep = archive::Endpoint {
         url: endpoint.to_string(),
         token: token.to_string(),
+        cf_access,
     };
     let response = archive::upload(&ep, file, commit_sha, branch)?;
     println!("{response}");
@@ -1417,6 +1522,7 @@ fn run_pull(
     latest_of: Option<&str>,
     output: Option<&PathBuf>,
     allow_missing: bool,
+    cf_access: Option<archive::CfAccess>,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let target = match (sha, latest_of) {
         (Some(s), None) => archive::PullTarget::BySha(s.to_string()),
@@ -1432,6 +1538,7 @@ fn run_pull(
     let ep = archive::Endpoint {
         url: endpoint.to_string(),
         token: token.to_string(),
+        cf_access,
     };
     let found = archive::pull(&ep, &target, output, allow_missing)?;
     if !found {

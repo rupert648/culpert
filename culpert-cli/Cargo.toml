@@ -20,6 +20,19 @@ path = "src/main.rs"
 # Binary-only CLI; nothing to document for downstream users.
 doc = false
 
+[features]
+# Off-by-default support for sending Cloudflare Access service-token
+# headers (`CF-Access-Client-Id` / `CF-Access-Client-Secret`) when
+# calling a `culpert-archive` instance that lives behind Cloudflare
+# Access. Builds without this feature don't carry the flags or the
+# header-emitting code paths.
+#
+# Enable via `cargo install --features cloudflare-access culpert-cli`.
+# The culpert-diff composite action installs with this feature on
+# automatically.
+default = []
+cloudflare-access = []
+
 [dependencies]
 culpert = { workspace = true }
 clap = { workspace = true }

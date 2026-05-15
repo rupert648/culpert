@@ -24,9 +24,30 @@ use std::path::PathBuf;
 /// `token` is the `AUTH_TOKEN` you set via `wrangler secret put`.
 /// Both are typically read from environment variables in CI
 /// (`CULPERT_ARCHIVE` / `CULPERT_TOKEN`).
+///
+/// `cf_access` carries optional Cloudflare Access service-token
+/// credentials for archive instances that sit behind Cloudflare Access.
+/// Only meaningful when the crate is built with the `cloudflare-access`
+/// feature — without that feature the field exists (as `None`) but no
+/// CLI surface wires it up, so the headers are never set.
 pub struct Endpoint {
     pub url: String,
     pub token: String,
+    pub cf_access: Option<CfAccess>,
+}
+
+/// Cloudflare Access service-token credentials. Sent as request headers:
+///
+/// - `CF-Access-Client-Id: <client_id>`
+/// - `CF-Access-Client-Secret: <client_secret>`
+///
+/// Cloudflare strips these at the edge and forwards a signed JWT in
+/// `Cf-Access-Jwt-Assertion` to the worker, which we don't currently
+/// inspect — the existing bearer-token check inside the worker is the
+/// "after-Access" gate.
+pub struct CfAccess {
+    pub client_id: String,
+    pub client_secret: String,
 }
 
 impl Endpoint {
@@ -70,10 +91,15 @@ pub fn upload(
         url.push_str(&percent_encode(b));
     }
 
-    let response = ureq::post(&url)
+    let mut request = ureq::post(&url)
         .set("Authorization", &format!("Bearer {}", endpoint.token))
-        .set("Content-Type", "application/octet-stream")
-        .send_bytes(&bytes);
+        .set("Content-Type", "application/octet-stream");
+    if let Some(access) = &endpoint.cf_access {
+        request = request
+            .set("CF-Access-Client-Id", &access.client_id)
+            .set("CF-Access-Client-Secret", &access.client_secret);
+    }
+    let response = request.send_bytes(&bytes);
 
     match response {
         Ok(r) => r
@@ -106,9 +132,13 @@ pub fn pull(
         ),
     };
 
-    let response = ureq::get(&url)
-        .set("Authorization", &format!("Bearer {}", endpoint.token))
-        .call();
+    let mut request = ureq::get(&url).set("Authorization", &format!("Bearer {}", endpoint.token));
+    if let Some(access) = &endpoint.cf_access {
+        request = request
+            .set("CF-Access-Client-Id", &access.client_id)
+            .set("CF-Access-Client-Secret", &access.client_secret);
+    }
+    let response = request.call();
 
     let response = match response {
         Ok(r) => r,

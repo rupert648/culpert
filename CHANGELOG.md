@@ -6,7 +6,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet — the next bump moves out of 0.1.0._
+_Nothing yet._
+
+## [0.1.1] — 2026-05-15
+
+### Added
+
+- **`culpert-cli`**: optional `cloudflare-access` cargo feature (off
+  by default) that adds `--cf-access-client-id` /
+  `--cf-access-client-secret` flags to `upload` and `pull`, with
+  `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` env-var
+  fallbacks. Sets the `CF-Access-Client-Id` /
+  `CF-Access-Client-Secret` headers when contacting a
+  culpert-archive instance that sits behind Cloudflare Access.
+  Builds without the feature don't carry the flags or the
+  header-emitting code — backwards-compatible for non-Access
+  deployments.
+
+  Install with `cargo install --locked --features cloudflare-access
+  culpert-cli` when needed.
+
+- **`culpert-diff` composite action**: new `access-client-id` /
+  `access-client-secret` inputs. When set, the action forwards
+  them as `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET`
+  env vars to every `culpert-cli` invocation. The caller is
+  responsible for installing the CLI with `--features
+  cloudflare-access` if they're using Access (the action doesn't
+  install the CLI itself).
+
+Other crates (`culpert`, `culpert-macros`, `culpert-foundations`,
+`culpert-tracing`) are unchanged at 0.1.1 — re-publish for the
+version bump only.
 
 ## [0.1.0] — 2026-05-15
 
