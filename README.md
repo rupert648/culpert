@@ -259,10 +259,33 @@ culpert diff /tmp/baseline.pb.gz /tmp/profile.pb.gz \
   --threshold-bytes 1048576 --threshold-pct 10   # exit 1 on regression
 ```
 
-[culpert's own `.github/workflows/rust.yml`](.github/workflows/rust.yml)
-demonstrates the whole flow against example-macros — see the `profile`
-job. Currently warn-only (`--no-fail`) until enough main-branch runs
-have accumulated to make gating meaningful.
+For drop-in CI use, this repo ships a reusable **composite action**
+that wraps the whole flow:
+
+```yaml
+# In your workflow, after you've captured a profile:
+- uses: rupert648/culpert/.github/actions/culpert-diff@main
+  with:
+    archive-url:   ${{ vars.CULPERT_ARCHIVE }}
+    archive-token: ${{ secrets.CULPERT_TOKEN }}
+    profile:       /tmp/my-service-profile.pb.gz
+    culpert-cli:   ./target/release/culpert    # path to the binary
+```
+
+That one block does: `culpert info` (sanity check in the run log) →
+`culpert pull --latest-of main --allow-missing` → `culpert diff
+--format markdown` (posted to `$GITHUB_STEP_SUMMARY` and, on
+`pull_request` events, as a sticky PR comment) → `culpert upload` as
+the new baseline. Override defaults with the action's inputs —
+`baseline-branch`, `threshold-bytes`, `threshold-pct`,
+`fail-on-regression`, etc. See
+[`.github/actions/culpert-diff/action.yml`](.github/actions/culpert-diff/action.yml)
+for the full input schema.
+
+Culpert's own [`rust.yml`](.github/workflows/rust.yml) profiles
+`example-macros` and invokes the same action — that's the worked
+example. Currently warn-only (`fail-on-regression: "false"`) until
+enough main-branch runs have accumulated to make gating meaningful.
 
 The worker never parses the pprof bytes — it's dumb storage. Sample
 attribution, Bernstein correction, threshold logic all run in this CLI.

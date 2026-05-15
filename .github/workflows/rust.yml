@@ -28,38 +28,26 @@ jobs:
     - name: Run tests
       run: cargo test --workspace --verbose
 
-  # Capture a profile, push it to culpert-archive, diff against the
-  # latest baseline on main. Demonstrates the full
-  # "capture → upload → pull baseline → diff → PR comment" flow
-  # described in `culpert-archive`'s README.
+  # Capture an allocation profile from example-macros and diff it
+  # against the latest baseline on main. Demonstrates how external
+  # users wire up the `culpert-diff` composite action from this repo
+  # against their own service.
   #
-  # Currently in WARN-ONLY mode: `culpert diff --no-fail` posts the
-  # markdown summary but doesn't fail the build on regression. Drop
-  # `--no-fail` once a few weeks of green main-branch runs have
-  # established a stable baseline that's worth gating on.
+  # `pull_request` permissions: write needed so the sticky-comment
+  # step can edit/post on the PR. `contents: read` is the implicit
+  # default; we make it explicit for clarity.
   #
   # Requirements:
-  #   - Repo VAR  `CULPERT_ARCHIVE` = the deployed worker URL,
+  #   * Repo VAR    `CULPERT_ARCHIVE` = the deployed worker URL,
   #     e.g. https://culpert-archive.<your-subdomain>.workers.dev
-  #   - Repo SECRET `CULPERT_TOKEN` = the AUTH_TOKEN you set via
+  #   * Repo SECRET `CULPERT_TOKEN`   = the AUTH_TOKEN you set via
   #     `wrangler secret put AUTH_TOKEN` on the archive.
   profile:
     runs-on: ubuntu-latest
     needs: build  # don't bother profiling a broken build
-
-    # Shared env so each step doesn't repeat the secret plumbing. The
-    # `||` fallbacks pick the right value depending on event type:
-    #   * On `push`: github.head_ref is empty → use github.ref_name (e.g. "main").
-    #     github.event.pull_request.head.sha is null → use github.sha.
-    #   * On `pull_request`: github.head_ref is the source branch (the
-    #     PR's branch) — what we actually want, NOT github.ref_name
-    #     which is "<pr-number>/merge". Likewise the head sha rather
-    #     than the auto-generated merge-commit sha.
-    env:
-      CULPERT_ARCHIVE:    ${{ vars.CULPERT_ARCHIVE }}
-      CULPERT_TOKEN:      ${{ secrets.CULPERT_TOKEN }}
-      GITHUB_SHA:         ${{ github.event.pull_request.head.sha || github.sha }}
-      GITHUB_REF_NAME:    ${{ github.head_ref || github.ref_name }}
+    permissions:
+      contents: read
+      pull-requests: write  # sticky-pull-request-comment writes here
 
     steps:
     - uses: actions/checkout@v4
@@ -75,46 +63,17 @@ jobs:
       # under a second and writes /tmp/example-macros.pb.gz.
       run: ./target/release/example-macros
 
-    - name: Show captured profile metadata
-      # `culpert info` confirms the artefact looks sensible in the run
-      # log: sample rate, sample count, total bytes, any embedded
-      # metadata. Doesn't fail on anything.
-      run: ./target/release/culpert info /tmp/example-macros.pb.gz
-
-    # IMPORTANT: pull BEFORE upload. Otherwise on a `main` push the
-    # upload-then-pull-latest-of-main sequence returns the just-uploaded
-    # profile, and we'd diff it against itself.
-    - name: Pull latest main as baseline
-      # --allow-missing returns 0 (writing nothing) on 404, so the very
-      # first run — when no baseline exists yet — doesn't fail the
-      # build. The diff step below branches on whether the file exists.
-      run: |
-        ./target/release/culpert pull \
-          --latest-of main \
-          -o /tmp/baseline.pb.gz \
-          --allow-missing
-
-    - name: Diff against baseline → step summary
-      # Markdown to $GITHUB_STEP_SUMMARY shows up nicely on the run
-      # page. --no-fail keeps this job green during the warm-up period;
-      # drop --no-fail once main has a few weeks of stable baselines.
-      run: |
-        if [ -s /tmp/baseline.pb.gz ]; then
-          ./target/release/culpert diff \
-            /tmp/baseline.pb.gz /tmp/example-macros.pb.gz \
-            --format markdown --no-fail >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          ./target/release/culpert diff \
-            /tmp/baseline.pb.gz /tmp/example-macros.pb.gz \
-            --no-fail
-        else
-          echo "## culpert allocation profile" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "_No baseline available yet — this is the first profile for \`main\`._" >> "$GITHUB_STEP_SUMMARY"
-        fi
-
-    # Upload AFTER the diff is done — see the comment above the pull
-    # step. PR profiles upload under their source branch name (e.g.
-    # `feat/foo`) so they don't pollute `--latest-of main`.
-    - name: Upload current profile to culpert-archive
-      run: ./target/release/culpert upload /tmp/example-macros.pb.gz
+    # The composite action handles everything downstream of the
+    # captured profile: pull baseline → diff → step summary → sticky
+    # PR comment → upload as the new baseline. Same action external
+    # users would invoke against their own service profiles.
+    - name: culpert diff against main
+      uses: ./.github/actions/culpert-diff
+      with:
+        archive-url:   ${{ vars.CULPERT_ARCHIVE }}
+        archive-token: ${{ secrets.CULPERT_TOKEN }}
+        profile:       /tmp/example-macros.pb.gz
+        culpert-cli:   ./target/release/culpert
+        # TODO: flip to "true" once main has a few weeks of stable
+        # baselines and any flagged regressions are real signal.
+        fail-on-regression: "false"
