@@ -14,17 +14,25 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/rupert648/culpert"
+# Workspace-relative path. cargo's inheritance machinery resolves this
+# against the workspace root, so each sub-crate's `readme.workspace =
+# true` ends up pointing at the same shared README.md.
+readme = "README.md"
+# Five-keyword cap (crates.io limit). Shared across all crates — they
+# all live in the same profiling / memory-tracing problem space.
+keywords = ["profiling", "allocation", "heap", "pprof", "tracing"]
+categories = ["development-tools::profiling", "memory-management"]
 
 [workspace.dependencies]
 # Internal crates
-culpert = { path = "culpert", version = "0.0.1" }
-culpert-foundations = { path = "culpert-foundations", version = "0.0.1" }
-culpert-tracing = { path = "culpert-tracing", version = "0.0.1" }
-culpert-macros = { path = "culpert-macros", version = "0.0.1" }
+culpert = { path = "culpert", version = "0.1.0" }
+culpert-foundations = { path = "culpert-foundations", version = "0.1.0" }
+culpert-tracing = { path = "culpert-tracing", version = "0.1.0" }
+culpert-macros = { path = "culpert-macros", version = "0.1.0" }
 
 # culpert core deps
 backtrace = "0.3"

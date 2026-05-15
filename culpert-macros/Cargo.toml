@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Proc-macros for culpert. The crate-root re-exports the macros at `culpert::span_fn`; depend on `culpert` rather than this crate directly."
 
 [lib]

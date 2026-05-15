@@ -4,7 +4,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "CLI for analyzing culpert profiles (`culpert report`, `culpert diff`)."
+readme.workspace = true
+keywords.workspace = true
+# culpert-cli is a binary CLI, so override the workspace's library-
+# focused categories with command-line-utilities + the shared profiling
+# one. Crates.io allows up to 5 categories.
+categories = ["command-line-utilities", "development-tools::profiling"]
+description = "CLI for analyzing culpert profiles (`culpert report` / `diff` / `info` / `upload` / `pull`)."
 
 [[bin]]
 name = "culpert"
