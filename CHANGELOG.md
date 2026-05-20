@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [0.1.2] — 2026-05-20
+
+### Fixed
+
+- **`culpert`**: frame-pointer stack walker (`StackCaptureStrategy::FramePointer`)
+  now bails cleanly when the saved-FP slot of a stack frame contains a
+  misaligned-but-in-range value (typically left there by a calling function
+  that didn't preserve the frame pointer — e.g. some libc / jemalloc /
+  syscall trampoline frames). Previously, the walker would dereference the
+  misaligned pointer, trigger Rust's debug-build alignment check, and
+  abort the calling thread with a non-unwinding `misaligned pointer
+  dereference` panic. Since the walk runs inside the global allocator hot
+  path (`TrackingAllocator::alloc` → `observe` → `walk`), the abort would
+  take down the whole tokio worker. The walker now treats a non-aligned
+  saved-FP as an end-of-chain signal — same outcome as the existing
+  bounds and strict-increase guards. Includes a regression test that
+  constructs a forged stack with a misaligned saved-FP value.
+
+Other crates (`culpert-macros`, `culpert-foundations`, `culpert-tracing`,
+`culpert-cli`) are unchanged at 0.1.2 — re-publish for the version bump
+only.
+
 ## [0.1.1] — 2026-05-15
 
 ### Added

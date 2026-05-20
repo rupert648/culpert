@@ -172,8 +172,24 @@ mod aarch64 {
 /// increase between iterations, or yields a zero return address.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn walk(out: &mut Frames, depth: usize, mut fp: *const usize, sp_lower: usize, top_guess: usize) {
+    // Both the x86_64 and aarch64 ABIs require frame pointers (and the
+    // saved-FP / return-address slots they point at) to be pointer-aligned.
+    // A non-aligned value in the saved-FP slot is unambiguous "calling
+    // function didn't preserve fp; the bytes here are garbage." We have to
+    // detect this before dereferencing — Rust's debug-build alignment check
+    // turns a misaligned `*fp` into a non-unwinding panic, which aborts the
+    // worker thread when this walk runs inside the global allocator hot
+    // path (e.g. `TrackingAllocator::alloc -> observe -> walk`).
+    const ALIGN: usize = core::mem::align_of::<usize>();
+
     let mut prev_fp: usize = 0;
     while !fp.is_null() && (fp as usize) >= sp_lower && (fp as usize) < top_guess {
+        // Alignment guard. Combined with the bounds check above, this is
+        // what makes the SAFETY claim on the dereferences below valid.
+        if !(fp as usize).is_multiple_of(ALIGN) {
+            break;
+        }
+
         // Strict-increase guard: as the walk steps outward, frame
         // pointers must move toward higher addresses (stacks grow
         // down). If the chain ever turns around, the data is corrupt
@@ -183,13 +199,13 @@ fn walk(out: &mut Frames, depth: usize, mut fp: *const usize, sp_lower: usize, t
         }
         prev_fp = fp as usize;
 
-        // SAFETY: we just verified `fp` is in the plausible-stack
-        // range. The cell at `[fp + 8]` is, by calling convention,
-        // the return address saved at this frame's entry. The worst
-        // remaining failure mode (frame pointers omitted on some
-        // caller, garbage value in the saved slot) is "we record a
-        // bogus IP and bail next iteration when the bounds check
-        // catches the next fp" — not a segfault.
+        // SAFETY: we just verified `fp` is in the plausible-stack range
+        // AND pointer-aligned. The cell at `[fp + 8]` is, by calling
+        // convention, the return address saved at this frame's entry.
+        // The worst remaining failure mode (frame pointers omitted on
+        // some caller, garbage value in the saved slot) is "we record a
+        // bogus IP and bail next iteration when the bounds + alignment
+        // check catches the next fp" — not a segfault, not an abort.
         let return_addr = unsafe { *fp.add(1) };
         if return_addr == 0 {
             break;
@@ -200,9 +216,9 @@ fn walk(out: &mut Frames, depth: usize, mut fp: *const usize, sp_lower: usize, t
         }
 
         // SAFETY: same justification — `[fp]` is the saved previous
-        // frame pointer. The very next iteration's bounds check will
-        // catch the case where this value is not actually a valid
-        // stack address.
+        // frame pointer. The very next iteration's bounds + alignment
+        // checks catch the case where this value is not actually a
+        // valid stack address.
         fp = unsafe { *fp as *const usize };
     }
 }
@@ -246,5 +262,59 @@ mod tests {
         // Frame-pointer strategy: just check we didn't panic or segfault
         // (we got here). Frame count depends on build flags.
         assert!(fp.len() <= 16);
+    }
+
+    /// Regression test for the alignment-guard bug: if the saved-FP slot
+    /// of a stack frame holds a value that's in-range but misaligned (the
+    /// real-world cause: a calling function that doesn't preserve frame
+    /// pointers and happens to leave non-aligned bytes in `rbp`), the
+    /// walker used to dereference it and trigger a non-unwinding panic
+    /// (`misaligned pointer dereference: address must be a multiple of 0x8`).
+    ///
+    /// That was fatal in practice because `walk` runs inside the global
+    /// allocator hot path, so the abort took out the calling thread.
+    ///
+    /// The fix is the `(fp as usize) % ALIGN != 0` early-break above.
+    /// This test constructs a forged "stack" where the saved-FP slot of
+    /// the first frame contains a misaligned in-range value and verifies
+    /// `walk` returns cleanly with whatever frames it accumulated before
+    /// hitting the bad pointer.
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn walk_bails_on_misaligned_fp_in_saved_slot() {
+        // Layout: two adjacent "frames" in a Vec<usize>:
+        //
+        //   [0] = misaligned next-fp value         (saved fp from caller)
+        //   [1] = 0xDEADBEEF                       (saved ra from caller)
+        //
+        // We pass `&buf[0]` as the initial fp. The walker reads ra at
+        // `fp.add(1)` (ok — buf is aligned), records 0xDEADBEEF, then
+        // reads next_fp at `*fp` (a misaligned address). Before the fix
+        // this panicked. After the fix it must break cleanly.
+        let mut buf = [0_usize; 4];
+
+        // Pick a misaligned value that falls inside `buf` so the bounds
+        // check passes but the alignment check fails. `&buf[2]` is
+        // aligned; `&buf[2] + 3` is in-range but 3 bytes off-alignment.
+        let misaligned = (&buf[2] as *const usize as usize) + 3;
+        debug_assert_ne!(misaligned % core::mem::align_of::<usize>(), 0);
+
+        buf[0] = misaligned;
+        buf[1] = 0xDEAD_BEEF;
+
+        let fp = &buf[0] as *const usize;
+        let sp_lower = buf.as_ptr() as usize;
+        let top_guess = sp_lower + buf.len() * core::mem::size_of::<usize>() + 1;
+
+        let mut frames = Frames::default();
+        // The walk MUST NOT panic. If the alignment guard is missing,
+        // the second iteration deref of the misaligned pointer will
+        // abort the test process.
+        walk(&mut frames, 16, fp, sp_lower, top_guess);
+
+        // We expect exactly one frame captured (the ra at buf[1]) before
+        // the walker followed the misaligned next-fp and bailed.
+        assert_eq!(frames.len(), 1, "frames captured before bailing");
+        assert_eq!(frames.as_slice()[0], 0xDEAD_BEEF, "captured ra is buf[1]");
     }
 }
