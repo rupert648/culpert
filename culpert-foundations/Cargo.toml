@@ -18,3 +18,9 @@ parking_lot = { workspace = true }
 # `testing` for TelemetryContext::test() in integration tests.
 foundations = { workspace = true, features = ["testing"] }
 tokio = { workspace = true }
+criterion = { workspace = true }
+tikv-jemallocator = { workspace = true }
+
+[[bench]]
+name = "foundations_overhead"
+harness = false
