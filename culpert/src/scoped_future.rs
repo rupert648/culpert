@@ -75,11 +75,7 @@ impl<F: Future> ScopedFuture<F> {
     /// the caller's current scope-stack top — e.g. when spawning from
     /// a context where the parent span is known but may not be on the
     /// current thread's stack.
-    pub fn new_with_parent(
-        name: &'static str,
-        parent: Option<SpanId>,
-        inner: F,
-    ) -> Self {
+    pub fn new_with_parent(name: &'static str, parent: Option<SpanId>, inner: F) -> Self {
         let id = scope::mint_with_parent(name, parent);
         Self { id, inner }
     }
