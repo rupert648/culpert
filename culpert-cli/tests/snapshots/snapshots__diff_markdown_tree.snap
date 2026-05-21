@@ -1,0 +1,18 @@
+---
+source: culpert-cli/tests/snapshots.rs
+expression: out
+---
+### culpert: allocation diff (tree view)
+
+- **before:** `[BEFORE]` — total 1.50 MB (estimated)
+- **after:**  `[AFTER]` — total 1.75 MB (estimated)
+- **net Δ:** +256.00 KB (+16.67%)
+- **sample rate:** 64.00 KB/alloc
+
+```
+span                                            before         after             Δ         Δ%
+----------------------------------------  ------------  ------------  ------------  ---------
+handle_request                                 1.50 MB       1.75 MB    +256.00 KB    +16.67%
+├─ parse_input                                  512.00 KB     768.00 KB    +256.00 KB    +50.00%
+└─ build_response                                 1.00 MB       1.00 MB          +0 B     +0.00%
+```

@@ -1,0 +1,14 @@
+---
+source: culpert-cli/tests/snapshots.rs
+expression: out
+---
+Hierarchical span report (24 samples, sample rate 64.00 KB/alloc):
+  Tree shows span_name groupings under their parents (from
+  `span_parent_id` labels emitted by whichever SpanContext was
+  installed). `bytes` is the Bernstein-corrected, unbiased
+  estimate of allocated bytes (see CHANGELOG: geometric sampling).
+  Use --flat for a simple sorted-by-bytes table without hierarchy.
+
+handle_request                                 1.50 MB  100.00%  (self 0 B)
+├─ build_response                                 1.00 MB   66.67%  (self 1.00 MB)
+└─ parse_input                                  512.00 KB   33.33%  (self 512.00 KB)

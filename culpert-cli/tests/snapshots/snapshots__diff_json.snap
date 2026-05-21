@@ -1,0 +1,47 @@
+---
+source: culpert-cli/tests/snapshots.rs
+expression: out
+---
+{
+  "after": {
+    "metadata": {},
+    "path": "[AFTER]",
+    "total_bytes": 1835008
+  },
+  "before": {
+    "metadata": {},
+    "path": "[BEFORE]",
+    "total_bytes": 1572864
+  },
+  "rate_bytes": 65536,
+  "rows": [
+    {
+      "after": 786432,
+      "before": 524288,
+      "delta": 262144,
+      "kind": "regression",
+      "name": "parse_input",
+      "pct": 50.0
+    },
+    {
+      "after": 1048576,
+      "before": 1048576,
+      "delta": 0,
+      "kind": "quiet",
+      "name": "build_response",
+      "pct": 0.0
+    }
+  ],
+  "schema_version": 1,
+  "summary": {
+    "had_regressions": true,
+    "improvements": 0,
+    "quiet": 1,
+    "regressions": 1,
+    "total_delta_bytes": 262144
+  },
+  "thresholds": {
+    "bytes": 4096,
+    "pct": 5.0
+  }
+}
