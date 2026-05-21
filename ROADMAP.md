@@ -28,9 +28,9 @@ Configurable absolute (`--threshold-bytes`) and relative
 surface. NEW and GONE spans are called out explicitly.
 
 What's deferred to a v0.2.x polish round:
-- **Hierarchical diff** — regressions nested under their parent span,
-  using the same tree builder as `culpert report`. Flat is enough for
-  the headline value (PR comments).
+- ~~**Hierarchical diff**~~ — **shipped** as `culpert diff --tree`. Regressions
+  nested under their parent span, using the same tree builder as `culpert
+  report`. Flat remains the default; `--tree` opts in.
 - **JSON output.** Useful for downstream machine consumption; tabled
   until someone asks.
 - **Statistical confidence bands.** Single-sample variance at 1-in-N
@@ -192,7 +192,7 @@ without subtle parent-resolution surprises).
 7. ~~**Metadata cache eviction**~~ — **shipped** as
    `SpanContext::on_snapshot`.
 8. ~~**Encoder-side machinery-frame stripping**~~ — **shipped.**
-9. Then opportunistically: hierarchical diff polish, JSON diff output.
+9. Then opportunistically: JSON diff output.
 
 The v0.2 marquee is fully in: hierarchy, diff, broader-ecosystem reach
 (`tracing`), sampling-independent attribution, FP-based capture, and
