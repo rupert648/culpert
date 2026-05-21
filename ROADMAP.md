@@ -170,7 +170,7 @@ without subtle parent-resolution surprises).
 | | What | Status today |
 |---|------|--------------|
 | 7 | ~~`FoundationsSpanContext` metadata cache eviction~~ — **shipped** as `SpanContext::on_snapshot` hook; foundations / tracing / local-scope adapters all clear their caches automatically at end of snapshot. |
-| 8 | Strip capture-machinery frames in the **encoder**, not just the CLI display logic, so stock `pprof -text` shows real user code at the leaf instead of `backtrace::trace` | not started |
+| 8 | ~~Strip capture-machinery frames in the **encoder**, not just the CLI display logic, so stock `pprof -text` shows real user code at the leaf instead of `backtrace::trace`~~ — **shipped** | |
 | 9 | Customisable pprof label keys (currently hardcoded `"span_id"` / `"span_name"`) | not started |
 | 10 | Load `culpert::Config` from foundations' `TelemetrySettings` so it's one config tree, not two | not started |
 | 11 | `pprof_route` allocates a `BoxFuture` per request — cheap on the telemetry server but worth pooling for very high request rates | not started |
@@ -191,8 +191,8 @@ without subtle parent-resolution surprises).
    corrected unbiased `bytes_total`; CLI dropped to two columns.
 7. ~~**Metadata cache eviction**~~ — **shipped** as
    `SpanContext::on_snapshot`.
-8. Then opportunistically: hierarchical diff polish, JSON diff output,
-   async `#[culpert::span_fn]`, encoder-side machinery-frame stripping.
+8. ~~**Encoder-side machinery-frame stripping**~~ — **shipped.**
+9. Then opportunistically: hierarchical diff polish, JSON diff output.
 
 The v0.2 marquee is fully in: hierarchy, diff, broader-ecosystem reach
 (`tracing`), sampling-independent attribution, FP-based capture, and

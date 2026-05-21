@@ -38,6 +38,38 @@ use crate::Profile;
 use prost::Message;
 use std::collections::HashMap;
 
+/// Frame name substrings that identify culpert's own capture machinery —
+/// `backtrace::trace`, the allocator shim, Rust's alloc glue, etc.
+///
+/// Rust 1.95+ mangles symbols as `<crate>[<build_hash>]::<path>`, so we
+/// match both the old (`alloc::raw_vec::...`) and new (`]::raw_vec::...`)
+/// forms.
+pub const MACHINERY_NEEDLES: &[&str] = &[
+    "backtrace::",
+    "culpert::sampler",
+    "culpert::stack_capture",
+    "culpert::allocator",
+    "<culpert::allocator::TrackingAllocator",
+    "__rust_alloc",
+    "__rust_realloc",
+    "__rust_alloc_zeroed",
+    "__rustc[",
+    // Old-form (no build-hash bracket).
+    "alloc::alloc::alloc",
+    "alloc::alloc::Global",
+    "alloc::alloc::realloc",
+    "alloc::raw_vec::",
+    // New-form (post-bracket).
+    "]::alloc::alloc",
+    "]::alloc::Global",
+    "]::alloc::realloc",
+    "]::raw_vec::",
+];
+
+pub fn is_machinery(name: &str) -> bool {
+    MACHINERY_NEEDLES.iter().any(|n| name.contains(n))
+}
+
 /// pprof protobuf types, hand-written from `profile.proto`.
 ///
 /// We carry the messages directly (with `#[derive(prost::Message)]`) rather
@@ -318,6 +350,11 @@ fn build_proto(profile: &Profile) -> proto::Profile {
     for entry in &profile.entries {
         let mut location_ids = Vec::with_capacity(entry.frames.len());
         for frame in &entry.frames {
+            // Strip capture-machinery frames so stock `go tool pprof` /
+            // `pprof -text` shows real user code at the leaf.
+            if frame.name.as_deref().is_some_and(is_machinery) {
+                continue;
+            }
             let loc_id = match locs.get(&frame.ip) {
                 Some(&id) => id,
                 None => {
@@ -699,6 +736,97 @@ mod tests {
         assert_eq!(decoded.comment.len(), 3);
         let recovered = metadata(&decoded);
         assert_eq!(recovered, md);
+    }
+
+    #[test]
+    fn machinery_frames_stripped_from_encoder() {
+        let mut profile = fake_profile();
+        // Prepend machinery frames to the first entry's stack.
+        profile.entries[0].frames.insert(
+            0,
+            Frame {
+                ip: 0xdead,
+                name: Some("backtrace::capture::Backtrace::new_unresolved".into()),
+                filename: Some("backtrace/src/capture.rs".into()),
+                lineno: Some(1),
+            },
+        );
+        profile.entries[0].frames.insert(
+            0,
+            Frame {
+                ip: 0xbeef,
+                name: Some("culpert::sampler::on_alloc".into()),
+                filename: None,
+                lineno: None,
+            },
+        );
+
+        let bytes = encode(&profile);
+        let decoded = proto::Profile::decode(&bytes[..]).expect("decode");
+
+        // No location should carry a machinery function name.
+        for loc in &decoded.location {
+            for line in &loc.line {
+                let func = decoded
+                    .function
+                    .iter()
+                    .find(|f| f.id == line.function_id)
+                    .unwrap();
+                let name = &decoded.string_table[func.name as usize];
+                assert!(
+                    !is_machinery(name),
+                    "machinery frame leaked into encoded profile: {name}"
+                );
+            }
+        }
+
+        // The non-machinery user frames are still present.
+        let all_names: Vec<&str> = decoded
+            .function
+            .iter()
+            .map(|f| decoded.string_table[f.name as usize].as_str())
+            .collect();
+        assert!(all_names.contains(&"render_template"));
+        assert!(all_names.contains(&"build_response"));
+    }
+
+    #[test]
+    fn all_machinery_stack_emits_empty_location_list() {
+        // A sample whose entire stack is machinery should still appear in the
+        // output (its bytes count) but with an empty location_id list rather
+        // than disappearing entirely.
+        let profile = Profile {
+            entries: vec![crate::ProfileEntry {
+                span: None,
+                frames: vec![
+                    Frame {
+                        ip: 0x1,
+                        name: Some("alloc::alloc::alloc".into()),
+                        filename: None,
+                        lineno: None,
+                    },
+                    Frame {
+                        ip: 0x2,
+                        name: Some("culpert::allocator::on_alloc".into()),
+                        filename: None,
+                        lineno: None,
+                    },
+                ],
+                bytes_total: 64,
+                samples: 1,
+            }],
+            spans: std::collections::HashMap::new(),
+            dropped_samples: 0,
+            config: crate::config::Config::default(),
+        };
+
+        let bytes = encode(&profile);
+        let decoded = proto::Profile::decode(&bytes[..]).expect("decode");
+
+        assert_eq!(decoded.sample.len(), 1);
+        assert!(decoded.sample[0].location_id.is_empty());
+        assert_eq!(decoded.sample[0].value, vec![1, 64]);
+        assert_eq!(decoded.location.len(), 0);
     }
 
     #[test]
