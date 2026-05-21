@@ -14,8 +14,10 @@
 //!   [`crate::install`] to use scope-driven attribution.
 //!
 //! The `#[culpert::span_fn]` proc-macro (from `culpert-macros`, re-exported
-//! at `culpert::span_fn`) is the ergonomic front-end — it wraps a function
-//! body with `let _guard = culpert::scope::enter(name);`.
+//! at `culpert::span_fn`) is the ergonomic front-end — it wraps sync
+//! functions with `let _guard = culpert::scope::enter(name);` and async
+//! functions with [`crate::ScopedFuture`] (which enters/exits the scope
+//! around each `poll()`).
 //!
 //! Hierarchy is built directly: each `enter()` reads the top of the stack
 //! as the new scope's parent. Snapshots get a fully-populated
@@ -99,6 +101,73 @@ pub fn enter(name: &'static str) -> Scope {
         });
     }
 
+    STACK.with(|s| s.borrow_mut().push(id));
+    Scope { _priv: () }
+}
+
+/// Mint a fresh [`SpanId`], capture the caller's current span as the
+/// parent, and register the metadata — but do **not** push onto the
+/// thread-local stack.
+///
+/// This is the "construction-time" half of the async story: call it once
+/// when building a [`ScopedFuture`](crate::ScopedFuture), then use
+/// [`enter_preregistered`] on each `poll` to push/pop the already-minted
+/// ID.
+///
+/// Returns `(span_id, parent)`.
+pub fn mint(name: &'static str) -> (SpanId, Option<SpanId>) {
+    let _reentry = crate::sampler::enter_reentry_zone();
+
+    let raw = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let id = NonZeroU64::new(raw).expect("NEXT_ID starts at 1, only increments");
+
+    let parent = STACK.with(|s| s.borrow().last().copied());
+
+    {
+        let mut meta = METADATA.write();
+        meta.entry(id).or_insert(SpanMetadata {
+            name: name.to_string(),
+            parent,
+        });
+    }
+
+    (id, parent)
+}
+
+/// Mint a fresh [`SpanId`] with an explicit parent (instead of reading
+/// the thread-local stack), register the metadata, and do **not** push
+/// onto the stack.
+///
+/// Useful when the parent is known ahead of time (e.g. captured at
+/// `ScopedFuture` construction on a potentially different thread than
+/// the one that will `poll`).
+pub fn mint_with_parent(name: &'static str, parent: Option<SpanId>) -> SpanId {
+    let _reentry = crate::sampler::enter_reentry_zone();
+
+    let raw = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let id = NonZeroU64::new(raw).expect("NEXT_ID starts at 1, only increments");
+
+    {
+        let mut meta = METADATA.write();
+        meta.entry(id).or_insert(SpanMetadata {
+            name: name.to_string(),
+            parent,
+        });
+    }
+
+    id
+}
+
+/// Push an already-registered [`SpanId`] onto the calling thread's scope
+/// stack. Returns an RAII [`Scope`] guard that pops on drop.
+///
+/// The ID **must** have been previously registered via [`mint`],
+/// [`mint_with_parent`], or [`enter`]. If it hasn't, allocations will be
+/// attributed to this ID but [`LocalSpanContext::metadata`] will return
+/// `None` for it — the snapshot will still work, but the span will be
+/// unnamed.
+pub fn enter_preregistered(id: SpanId) -> Scope {
+    let _reentry = crate::sampler::enter_reentry_zone();
     STACK.with(|s| s.borrow_mut().push(id));
     Scope { _priv: () }
 }

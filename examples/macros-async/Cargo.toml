@@ -1,0 +1,15 @@
+[package]
+name = "example-macros-async"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Async culpert + #[culpert::span_fn] example — demonstrates ScopedFuture attribution across .await points."
+
+[[bin]]
+name = "example-macros-async"
+path = "src/main.rs"
+
+[dependencies]
+culpert = { workspace = true }
+tokio = { workspace = true }

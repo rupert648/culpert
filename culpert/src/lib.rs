@@ -63,6 +63,7 @@ pub mod config;
 pub mod mock;
 pub mod pprof;
 pub mod scope;
+pub mod scoped_future;
 pub mod span;
 pub mod stack_capture;
 
@@ -110,4 +111,5 @@ pub use culpert_macros::span_fn;
 pub use global::{install, shutdown, snapshot};
 pub use mock::{MockSpanContext, MockSpanGuard};
 pub use scope::{LocalSpanContext, Scope};
+pub use scoped_future::ScopedFuture;
 pub use span::{SpanContext, SpanId, SpanMetadata};

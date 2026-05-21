@@ -500,6 +500,7 @@ dependencies = [
  "parking_lot",
  "prost",
  "smallvec",
+ "tokio",
 ]
 
 [[package]]
@@ -724,6 +725,14 @@ name = "example-macros"
 version = "0.1.2"
 dependencies = [
  "culpert",
+]
+
+[[package]]
+name = "example-macros-async"
+version = "0.1.2"
+dependencies = [
+ "culpert",
+ "tokio",
 ]
 
 [[package]]

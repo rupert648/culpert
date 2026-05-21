@@ -10,6 +10,7 @@ members = [
     "examples/foundations",
     "examples/tracing",
     "examples/macros",
+    "examples/macros-async",
     "spike",
 ]
 
