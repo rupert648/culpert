@@ -19,7 +19,7 @@
 mod archive;
 
 use clap::{Parser, Subcommand};
-use culpert::pprof::{self, proto};
+use culpert::pprof::{self, is_machinery, proto};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -783,42 +783,6 @@ fn aggregate_callsites(profile: &proto::Profile, filter: &Filter) -> Vec<Callsit
 }
 
 /// Names matching any of these prefixes are stack-capture machinery (our
-/// own observe/sampler path, backtrace internals, the rust allocator
-/// shim) and should be skipped when picking a "leaf" callsite to show
-/// the user. The first frame that isn't machinery is the real one.
-/// Substrings (not just prefixes) that mark stack-capture / allocator
-/// shim frames. We want to skip these and stop on the first frame that's
-/// real user / framework code.
-///
-/// Rust 1.95+ mangles symbols as `<crate>[<build_hash>]::<path>` so we
-/// match both the old (`alloc::raw_vec::...`) and new (`]::raw_vec::...`)
-/// forms.
-const MACHINERY_NEEDLES: &[&str] = &[
-    "backtrace::",
-    "culpert::sampler",
-    "culpert::stack_capture",
-    "culpert::allocator",
-    "<culpert::allocator::TrackingAllocator",
-    "__rust_alloc",
-    "__rust_realloc",
-    "__rust_alloc_zeroed",
-    "__rustc[",
-    // Old-form (no build-hash bracket).
-    "alloc::alloc::alloc",
-    "alloc::alloc::Global",
-    "alloc::alloc::realloc",
-    "alloc::raw_vec::",
-    // New-form (post-bracket).
-    "]::alloc::alloc",
-    "]::alloc::Global",
-    "]::alloc::realloc",
-    "]::raw_vec::",
-];
-
-fn is_machinery(name: &str) -> bool {
-    MACHINERY_NEEDLES.iter().any(|n| name.contains(n))
-}
-
 fn format_leaf_callsite(
     sample: &proto::Sample,
     profile: &proto::Profile,
