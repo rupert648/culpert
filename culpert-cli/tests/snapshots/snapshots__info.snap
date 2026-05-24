@@ -1,0 +1,11 @@
+---
+source: culpert-cli/tests/snapshots.rs
+expression: out
+---
+File:            [PROFILE]
+Sample rate:     64.00 KB/alloc
+Total samples:   24
+Total bytes:     1.50 MB
+Unique spans:    3
+
+Metadata:        (none — install with Config { metadata: ... } to embed)

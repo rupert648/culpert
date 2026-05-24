@@ -99,6 +99,12 @@ enum Cmd {
         /// posts a comment).
         #[arg(long)]
         no_fail: bool,
+
+        /// Show regressions nested under their parent span, using the same
+        /// tree layout as `culpert report`. Applies to `--format text` and
+        /// `--format markdown`; `--format json` is always flat.
+        #[arg(long)]
+        tree: bool,
     },
 
     /// Print embedded metadata + a short summary of a culpert profile.
@@ -262,7 +268,17 @@ fn main() {
             threshold_pct,
             format,
             no_fail,
-        } => run_diff(&before, &after, top, threshold_bytes, threshold_pct, format).map(
+            tree,
+        } => run_diff(
+            &before,
+            &after,
+            top,
+            threshold_bytes,
+            threshold_pct,
+            format,
+            tree,
+        )
+        .map(
             |had_regressions| {
                 if had_regressions && !no_fail {
                     1
@@ -957,6 +973,7 @@ fn run_diff(
     threshold_bytes: u64,
     threshold_pct: f64,
     format: DiffFormat,
+    tree: bool,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let before_profile = load(before_path)?;
     let after_profile = load(after_path)?;
@@ -1053,16 +1070,25 @@ fn run_diff(
         .iter()
         .any(|d| matches!(d.kind, DiffKind::Regression | DiffKind::New));
 
-    match format {
-        DiffFormat::Text => render_diff_text(&summary, &regressions, &improvements),
-        DiffFormat::Markdown => render_diff_markdown(&summary, &regressions, &improvements),
-        DiffFormat::Json => render_diff_json(
-            &summary,
-            &diffs,
-            &before_profile,
-            &after_profile,
-            had_regressions,
-        )?,
+    if tree && !matches!(format, DiffFormat::Json) {
+        let roots = build_diff_tree(&before_profile, &after_profile);
+        match format {
+            DiffFormat::Text => render_diff_tree_text(&summary, &roots, top),
+            DiffFormat::Markdown => render_diff_tree_markdown(&summary, &roots, top),
+            DiffFormat::Json => unreachable!(),
+        }
+    } else {
+        match format {
+            DiffFormat::Text => render_diff_text(&summary, &regressions, &improvements),
+            DiffFormat::Markdown => render_diff_markdown(&summary, &regressions, &improvements),
+            DiffFormat::Json => render_diff_json(
+                &summary,
+                &diffs,
+                &before_profile,
+                &after_profile,
+                had_regressions,
+            )?,
+        }
     }
     Ok(had_regressions)
 }
@@ -1365,6 +1391,239 @@ fn render_diff_json(
 
     println!("{}", serde_json::to_string_pretty(&out)?);
     Ok(())
+}
+
+// ---- diff tree ---------------------------------------------------------
+
+struct DiffTreeNode {
+    name: String,
+    self_before: u64,
+    self_after: u64,
+    children: Vec<DiffTreeNode>,
+}
+
+fn subtree_diff_before(n: &DiffTreeNode) -> u64 {
+    n.self_before
+        .saturating_add(n.children.iter().map(subtree_diff_before).sum())
+}
+
+fn subtree_diff_after(n: &DiffTreeNode) -> u64 {
+    n.self_after
+        .saturating_add(n.children.iter().map(subtree_diff_after).sum())
+}
+
+/// Extract `(parent_name, child_name) → bytes` from a profile.
+/// Mirrors the aggregation pass inside `build_tree` but returns raw pairs
+/// so the diff builder can merge before/after without constructing two
+/// independent `TreeNode` trees.
+fn span_pairs(profile: &proto::Profile) -> HashMap<(Option<String>, String), u64> {
+    let span_id_key = string_index(profile, "span_id");
+    let span_name_key = string_index(profile, "span_name");
+    let span_parent_id_key = string_index(profile, "span_parent_id");
+
+    let mut id_to_name: HashMap<i64, String> = HashMap::new();
+    for sample in &profile.sample {
+        let id = span_id_key.and_then(|k| label_num(sample, k));
+        let name = span_name_key.and_then(|k| label_str(sample, k, profile));
+        if let (Some(id), Some(name)) = (id, name) {
+            id_to_name.entry(id).or_insert_with(|| name.to_string());
+        }
+    }
+
+    let mut pairs: HashMap<(Option<String>, String), u64> = HashMap::new();
+    for sample in &profile.sample {
+        let name = span_name_key
+            .and_then(|k| label_str(sample, k, profile))
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "(no span)".to_string());
+        let parent_name = span_parent_id_key
+            .and_then(|k| label_num(sample, k))
+            .and_then(|pid| id_to_name.get(&pid).cloned());
+        let bytes = sample.value.get(1).copied().unwrap_or(0).max(0) as u64;
+        *pairs.entry((parent_name, name)).or_default() += bytes;
+    }
+    pairs
+}
+
+fn build_diff_tree(
+    before_profile: &proto::Profile,
+    after_profile: &proto::Profile,
+) -> Vec<DiffTreeNode> {
+    let before_pairs = span_pairs(before_profile);
+    let after_pairs = span_pairs(after_profile);
+
+    // Union all (parent, name) pairs from both profiles.
+    let mut combined: HashMap<(Option<String>, String), (u64, u64)> = HashMap::new();
+    for (key, &bytes) in &before_pairs {
+        combined.entry(key.clone()).or_default().0 = bytes;
+    }
+    for (key, &bytes) in &after_pairs {
+        combined.entry(key.clone()).or_default().1 = bytes;
+    }
+
+    let mut by_parent: HashMap<Option<String>, Vec<(String, u64, u64)>> = HashMap::new();
+    for ((parent, name), (before, after)) in combined {
+        by_parent
+            .entry(parent)
+            .or_default()
+            .push((name, before, after));
+    }
+
+    build_diff_subtree(None, &by_parent)
+}
+
+fn build_diff_subtree(
+    parent: Option<&str>,
+    by_parent: &HashMap<Option<String>, Vec<(String, u64, u64)>>,
+) -> Vec<DiffTreeNode> {
+    let key = parent.map(|s| s.to_string());
+    let Some(children) = by_parent.get(&key) else {
+        return Vec::new();
+    };
+    let mut nodes: Vec<DiffTreeNode> = children
+        .iter()
+        .map(|(name, before, after)| DiffTreeNode {
+            name: name.clone(),
+            self_before: *before,
+            self_after: *after,
+            children: build_diff_subtree(Some(name), by_parent),
+        })
+        .collect();
+    // Sort by |subtree delta| descending — largest changes surface first.
+    nodes.sort_by_key(|n| {
+        let d = subtree_diff_after(n) as i64 - subtree_diff_before(n) as i64;
+        std::cmp::Reverse(d.unsigned_abs())
+    });
+    nodes
+}
+
+fn render_diff_node(node: &DiffTreeNode, prefix: &str, is_last: bool, depth: usize, top: usize) {
+    let connector = if depth == 0 {
+        ""
+    } else if is_last {
+        "└─ "
+    } else {
+        "├─ "
+    };
+    let before = subtree_diff_before(node);
+    let after = subtree_diff_after(node);
+    let delta = after as i64 - before as i64;
+    let pct = if before == 0 {
+        None
+    } else {
+        Some(100.0 * delta as f64 / before as f64)
+    };
+    let pct_str = match pct {
+        Some(p) => format!("{p:+.2}%"),
+        None if after > 0 => "NEW".to_string(),
+        None => "—".to_string(),
+    };
+    println!(
+        "{prefix}{connector}{:<40}  {:>12}  {:>12}  {:>12}  {:>9}",
+        node.name,
+        format_bytes(before),
+        format_bytes(after),
+        format_signed_bytes(delta),
+        pct_str,
+    );
+
+    let new_prefix = if depth == 0 {
+        String::new()
+    } else {
+        format!("{prefix}{}", if is_last { "   " } else { "│  " })
+    };
+
+    let visible: Vec<&DiffTreeNode> = node.children.iter().take(top).collect();
+    for (i, child) in visible.iter().enumerate() {
+        render_diff_node(child, &new_prefix, i + 1 == visible.len(), depth + 1, top);
+    }
+    if node.children.len() > top {
+        println!(
+            "{new_prefix}... ({} more children hidden)",
+            node.children.len() - top
+        );
+    }
+}
+
+fn render_diff_tree_text(summary: &DiffSummary, roots: &[DiffTreeNode], top: usize) {
+    let total_delta = summary.after_total as i64 - summary.before_total as i64;
+    let total_pct = if summary.before_total == 0 {
+        0.0
+    } else {
+        100.0 * total_delta as f64 / summary.before_total as f64
+    };
+
+    println!("Allocation diff (tree view):");
+    println!("  before:  {}", summary.before_path.display());
+    println!(
+        "           total {} (estimated)",
+        format_bytes(summary.before_total)
+    );
+    println!("  after:   {}", summary.after_path.display());
+    println!(
+        "           total {} (estimated)  Δ = {}  ({:+.2}%)",
+        format_bytes(summary.after_total),
+        format_signed_bytes(total_delta),
+        total_pct
+    );
+    println!("  rate:    {}/alloc", format_bytes(summary.rate_bytes));
+    println!();
+    println!(
+        "{:<40}  {:>12}  {:>12}  {:>12}  {:>9}",
+        "span", "before", "after", "Δ", "Δ%"
+    );
+    println!(
+        "{:-<40}  {:->12}  {:->12}  {:->12}  {:->9}",
+        "", "", "", "", ""
+    );
+    for (i, root) in roots.iter().enumerate() {
+        render_diff_node(root, "", i + 1 == roots.len(), 0, top);
+    }
+}
+
+fn render_diff_tree_markdown(summary: &DiffSummary, roots: &[DiffTreeNode], top: usize) {
+    let total_delta = summary.after_total as i64 - summary.before_total as i64;
+    let total_pct = if summary.before_total == 0 {
+        0.0
+    } else {
+        100.0 * total_delta as f64 / summary.before_total as f64
+    };
+
+    println!("### culpert: allocation diff (tree view)");
+    println!();
+    println!(
+        "- **before:** `{}` — total {} (estimated)",
+        summary.before_path.display(),
+        format_bytes(summary.before_total)
+    );
+    println!(
+        "- **after:**  `{}` — total {} (estimated)",
+        summary.after_path.display(),
+        format_bytes(summary.after_total)
+    );
+    println!(
+        "- **net Δ:** {} ({:+.2}%)",
+        format_signed_bytes(total_delta),
+        total_pct
+    );
+    println!(
+        "- **sample rate:** {}/alloc",
+        format_bytes(summary.rate_bytes)
+    );
+    println!();
+    println!("```");
+    println!(
+        "{:<40}  {:>12}  {:>12}  {:>12}  {:>9}",
+        "span", "before", "after", "Δ", "Δ%"
+    );
+    println!(
+        "{:-<40}  {:->12}  {:->12}  {:->12}  {:->9}",
+        "", "", "", "", ""
+    );
+    for (i, root) in roots.iter().enumerate() {
+        render_diff_node(root, "", i + 1 == roots.len(), 0, top);
+    }
+    println!("```");
 }
 
 // ---- info --------------------------------------------------------------

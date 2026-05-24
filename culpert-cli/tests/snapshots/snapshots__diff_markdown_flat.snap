@@ -1,0 +1,23 @@
+---
+source: culpert-cli/tests/snapshots.rs
+expression: out
+---
+### culpert: allocation diff
+
+- **before:** `[BEFORE]` — total 1.50 MB (estimated)
+- **after:**  `[AFTER]` — total 1.75 MB (estimated)
+- **net Δ:** +256.00 KB (+16.67%)
+- **sample rate:** 64.00 KB/alloc
+- **filter:** show changes ≥ 4.00 KB AND ≥ 5.00%
+
+#### Regressions
+
+| Span | Before | After | Δ | Δ% |
+|------|-------:|------:|--:|---:|
+| `parse_input` | 512.00 KB | 768.00 KB | +256.00 KB | +50.00% |
+
+#### Improvements
+
+_None._
+
+<sub>1 span(s) suppressed by thresholds.</sub>

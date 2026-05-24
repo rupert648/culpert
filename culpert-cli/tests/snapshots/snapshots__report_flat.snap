@@ -1,0 +1,12 @@
+---
+source: culpert-cli/tests/snapshots.rs
+expression: out
+---
+Top spans by allocation (24 samples, sample rate 64.00 KB/alloc):
+  `bytes` is the Bernstein-corrected, unbiased estimate of total bytes
+  allocated under each span (see CHANGELOG: geometric sampling).
+
+  span               samples           bytes  bytes %
+  --------------  ----------  --------------  -------
+  build_response          16         1.00 MB   66.67%
+  parse_input              8       512.00 KB   33.33%

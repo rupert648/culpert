@@ -38,3 +38,7 @@ culpert = { workspace = true }
 clap = { workspace = true }
 serde_json = { workspace = true }
 ureq = { workspace = true }
+
+[dev-dependencies]
+insta = "1"
+tempfile = "3"
