@@ -1,5 +1,3 @@
-//! Benchmarks that reproduce the challenge-platform CI scenario:
-//!
 //! - `TrackingAllocator<System>` as `#[global_allocator]`
 //! - foundations telemetry initialised with `Active(1.0)` sampling
 //! - `culpert_foundations::install()` wired up
@@ -23,7 +21,6 @@ use culpert::{Config, StackCaptureStrategy, TrackingAllocator};
 use foundations::telemetry::tracing;
 use foundations::telemetry::TelemetryContext;
 
-// Match challenge-platform: culpert wraps tikv-jemallocator (not System).
 #[global_allocator]
 static GLOBAL: TrackingAllocator<tikv_jemallocator::Jemalloc> =
     TrackingAllocator::new(tikv_jemallocator::Jemalloc);
@@ -41,7 +38,7 @@ fn ensure_culpert_installed() {
 
 /// Simulate a "request handler": enter a foundations span, allocate
 /// a bunch of data inside it (template rendering, JSON serialisation,
-/// HashMap building — all common in challenge-platform), then drop.
+/// HashMap building then drop.
 ///
 /// `alloc_count` × `alloc_size` gives the total bytes per "request".
 fn simulated_request(alloc_count: usize, alloc_size: usize) {
@@ -79,7 +76,6 @@ async fn concurrent_workload(concurrency: usize, requests_per_task: usize) -> us
 }
 
 fn benchmarks(c: &mut Criterion) {
-    // Build a multi-threaded tokio runtime (same as challenge-platform's runner).
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(8)
         .enable_all()
