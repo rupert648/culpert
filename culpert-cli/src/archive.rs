@@ -22,17 +22,16 @@ use std::path::PathBuf;
 ///
 /// `endpoint` is the worker base URL (no trailing slash, no path);
 /// `token` is the `AUTH_TOKEN` you set via `wrangler secret put`.
-/// Both are typically read from environment variables in CI
-/// (`CULPERT_ARCHIVE` / `CULPERT_TOKEN`).
+/// `project` scopes all operations to a specific project namespace.
+/// All are typically read from environment variables in CI
+/// (`CULPERT_ARCHIVE` / `CULPERT_TOKEN` / `CULPERT_PROJECT`).
 ///
 /// `cf_access` carries optional Cloudflare Access service-token
 /// credentials for archive instances that sit behind Cloudflare Access.
-/// Only meaningful when the crate is built with the `cloudflare-access`
-/// feature — without that feature the field exists (as `None`) but no
-/// CLI surface wires it up, so the headers are never set.
 pub struct Endpoint {
     pub url: String,
     pub token: String,
+    pub project: String,
     pub cf_access: Option<CfAccess>,
 }
 
@@ -82,7 +81,12 @@ pub fn upload(
 ) -> Result<String, Box<dyn std::error::Error>> {
     let bytes = std::fs::read(file).map_err(|e| format!("read {}: {e}", file.display()))?;
 
-    let mut url = format!("{}/v1/profiles/{}", endpoint.normalised_url(), commit_sha,);
+    let mut url = format!(
+        "{}/v1/projects/{}/profiles/{}",
+        endpoint.normalised_url(),
+        percent_encode(&endpoint.project),
+        commit_sha,
+    );
     if let Some(b) = branch {
         // ureq doesn't url-encode query values automatically; manually
         // percent-encode anything unsafe. Branch names are usually
@@ -124,10 +128,16 @@ pub fn pull(
     allow_missing: bool,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let url = match target {
-        PullTarget::BySha(sha) => format!("{}/v1/profiles/{}", endpoint.normalised_url(), sha,),
-        PullTarget::LatestOf(branch) => format!(
-            "{}/v1/profiles/latest?branch={}",
+        PullTarget::BySha(sha) => format!(
+            "{}/v1/projects/{}/profiles/{}",
             endpoint.normalised_url(),
+            percent_encode(&endpoint.project),
+            sha,
+        ),
+        PullTarget::LatestOf(branch) => format!(
+            "{}/v1/projects/{}/profiles/latest?branch={}",
+            endpoint.normalised_url(),
+            percent_encode(&endpoint.project),
             percent_encode(branch),
         ),
     };

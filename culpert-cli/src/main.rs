@@ -135,6 +135,11 @@ enum Cmd {
         #[arg(long, env = "CULPERT_TOKEN")]
         token: String,
 
+        /// Project identifier. Scopes the profile to a specific project
+        /// so multiple repos can share one archive deployment.
+        #[arg(long, env = "CULPERT_PROJECT")]
+        project: String,
+
         /// Commit SHA to key this upload by. Required.
         #[arg(long, value_name = "SHA", env = "GITHUB_SHA")]
         commit_sha: String,
@@ -186,6 +191,10 @@ enum Cmd {
         /// Bearer token.
         #[arg(long, env = "CULPERT_TOKEN")]
         token: String,
+
+        /// Project identifier.
+        #[arg(long, env = "CULPERT_PROJECT")]
+        project: String,
 
         /// Pull by exact commit SHA. Mutually exclusive with `--latest-of`.
         #[arg(long, value_name = "SHA", conflicts_with = "latest_of")]
@@ -292,6 +301,7 @@ fn main() {
             file,
             endpoint,
             token,
+            project,
             commit_sha,
             branch,
             #[cfg(feature = "cloudflare-access")]
@@ -309,6 +319,7 @@ fn main() {
                 &file,
                 &endpoint,
                 &token,
+                &project,
                 &commit_sha,
                 branch.as_deref(),
                 cf_access,
@@ -318,6 +329,7 @@ fn main() {
         Cmd::Pull {
             endpoint,
             token,
+            project,
             sha,
             latest_of,
             output,
@@ -336,6 +348,7 @@ fn main() {
             run_pull(
                 &endpoint,
                 &token,
+                &project,
                 sha.as_deref(),
                 latest_of.as_deref(),
                 output.as_ref(),
@@ -1716,6 +1729,7 @@ fn run_upload(
     file: &PathBuf,
     endpoint: &str,
     token: &str,
+    project: &str,
     commit_sha: &str,
     branch: Option<&str>,
     cf_access: Option<archive::CfAccess>,
@@ -1723,6 +1737,7 @@ fn run_upload(
     let ep = archive::Endpoint {
         url: endpoint.to_string(),
         token: token.to_string(),
+        project: project.to_string(),
         cf_access,
     };
     let response = archive::upload(&ep, file, commit_sha, branch)?;
@@ -1738,9 +1753,11 @@ fn run_upload(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_pull(
     endpoint: &str,
     token: &str,
+    project: &str,
     sha: Option<&str>,
     latest_of: Option<&str>,
     output: Option<&PathBuf>,
@@ -1761,6 +1778,7 @@ fn run_pull(
     let ep = archive::Endpoint {
         url: endpoint.to_string(),
         token: token.to_string(),
+        project: project.to_string(),
         cf_access,
     };
     let found = archive::pull(&ep, &target, output, allow_missing)?;
