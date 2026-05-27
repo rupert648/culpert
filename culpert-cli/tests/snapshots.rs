@@ -230,6 +230,63 @@ fn diff_json() {
     insta::assert_snapshot!(out);
 }
 
+// ---- flamegraph ---------------------------------------------------------
+
+#[test]
+fn flamegraph_folded_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("profile.pb.gz");
+    std::fs::write(&p, make_profile(524_288, 1_048_576)).unwrap();
+
+    // Default: annotate_spans=true, weight=bytes, format=folded.
+    let out = culpert(&["flamegraph", p.to_str().unwrap()]);
+    insta::assert_snapshot!(out);
+}
+
+#[test]
+fn flamegraph_folded_no_annotate() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("profile.pb.gz");
+    std::fs::write(&p, make_profile(524_288, 1_048_576)).unwrap();
+
+    let out = culpert(&["flamegraph", "--annotate-spans=false", p.to_str().unwrap()]);
+    insta::assert_snapshot!(out);
+}
+
+#[test]
+fn flamegraph_folded_span_filter() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("profile.pb.gz");
+    std::fs::write(&p, make_profile(524_288, 1_048_576)).unwrap();
+
+    let out = culpert(&["flamegraph", "--span", "parse_input", p.to_str().unwrap()]);
+    insta::assert_snapshot!(out);
+}
+
+#[test]
+fn flamegraph_folded_weight_samples() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("profile.pb.gz");
+    std::fs::write(&p, make_profile(524_288, 1_048_576)).unwrap();
+
+    let out = culpert(&["flamegraph", "--weight", "samples", p.to_str().unwrap()]);
+    insta::assert_snapshot!(out);
+}
+
+#[test]
+fn flamegraph_svg_smoke() {
+    // Just verify the SVG subcommand exits cleanly and emits valid XML —
+    // we don't snapshot the full SVG since inferno's output is large and
+    // subject to version-specific formatting changes.
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("profile.pb.gz");
+    std::fs::write(&p, make_profile(524_288, 1_048_576)).unwrap();
+
+    let out = culpert(&["flamegraph", "--format", "svg", p.to_str().unwrap()]);
+    assert!(out.contains("<svg"), "expected SVG output, got: {out:.200}");
+    assert!(out.contains("</svg>"), "SVG not closed properly");
+}
+
 // ---- info ---------------------------------------------------------------
 
 #[test]

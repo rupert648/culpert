@@ -1,0 +1,6 @@
+---
+source: culpert-cli/tests/snapshots.rs
+expression: out
+---
+build_response;my_app::response::build 1048576
+parse_input;my_app::parse::run 524288

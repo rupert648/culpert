@@ -1,0 +1,5 @@
+---
+source: culpert-cli/tests/snapshots.rs
+expression: out
+---
+parse_input;my_app::parse::run 524288

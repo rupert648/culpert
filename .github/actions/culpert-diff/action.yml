@@ -133,6 +133,15 @@ inputs:
     required: false
     default: ""
 
+  project:
+    description: >
+      Project name (tenant key) used to namespace profiles in the
+      archive. Passed as `--project` to `culpert pull` and
+      `culpert upload`. Defaults to the repository name
+      (e.g. `culpert` for `rupert648/culpert`).
+    required: false
+    default: ${{ github.event.repository.name }}
+
   access-client-id:
     description: >
       Cloudflare Access service-token Client ID, for archive instances
@@ -186,6 +195,7 @@ runs:
         CF_ACCESS_CLIENT_SECRET: ${{ inputs.access-client-secret }}
       run: |
         ${{ inputs.culpert-cli }} pull \
+          --project "${{ inputs.project }}" \
           --latest-of "${{ inputs.baseline-branch }}" \
           -o /tmp/culpert-baseline.pb.gz \
           --allow-missing
@@ -255,4 +265,4 @@ runs:
         CF_ACCESS_CLIENT_ID: ${{ inputs.access-client-id }}
         CF_ACCESS_CLIENT_SECRET: ${{ inputs.access-client-secret }}
       run: |
-        ${{ inputs.culpert-cli }} upload "${{ inputs.profile }}"
+        ${{ inputs.culpert-cli }} upload --project "${{ inputs.project }}" "${{ inputs.profile }}"
