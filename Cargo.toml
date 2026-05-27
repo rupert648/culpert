@@ -34,6 +34,9 @@ culpert-foundations = { path = "culpert-foundations", version = "0.1.4" }
 culpert-tracing = { path = "culpert-tracing", version = "0.1.4" }
 culpert-macros = { path = "culpert-macros", version = "0.1.4" }
 
+# flamegraph generation
+inferno = "0.11"
+
 # culpert core deps
 backtrace = "0.3"
 fastrand = "2.4.1"

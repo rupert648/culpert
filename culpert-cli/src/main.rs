@@ -107,6 +107,43 @@ enum Cmd {
         tree: bool,
     },
 
+    /// Generate a flamegraph from a culpert profile.
+    ///
+    /// By default emits folded-stack text (semicolon-separated, one line per
+    /// unique stack) which any standard flamegraph tool can consume. Pass
+    /// `--format svg` to render the SVG directly via the inferno crate
+    /// without any external tooling.
+    ///
+    /// Span names are prepended as synthetic root frames so the flamegraph
+    /// groups allocations by span at the top level. Pass `--no-annotate-spans`
+    /// for raw call stacks without span grouping.
+    Flamegraph {
+        /// Path to the .pb.gz profile file.
+        file: PathBuf,
+
+        /// Output format.
+        #[arg(long, value_enum, default_value = "folded")]
+        format: FlamegraphFormat,
+
+        /// What to use as the per-sample weight.
+        #[arg(long, value_enum, default_value = "bytes")]
+        weight: FlamegraphWeight,
+
+        /// Only include samples from the named span.
+        #[arg(long, value_name = "NAME")]
+        span: Option<String>,
+
+        /// Prepend the span name as a synthetic root frame so allocations
+        /// are grouped by span at the top of the flamegraph. Enabled by
+        /// default; pass --no-annotate-spans for raw call stacks.
+        #[arg(long, default_value = "true", action = clap::ArgAction::Set)]
+        annotate_spans: bool,
+
+        /// Write output to this file instead of stdout.
+        #[arg(long, short = 'o', value_name = "FILE")]
+        output: Option<PathBuf>,
+    },
+
     /// Print embedded metadata + a short summary of a culpert profile.
     /// Useful as a first look at a captured profile (`culpert info
     /// foo.pb.gz`) and in CI logs to confirm the right artefact was
@@ -246,6 +283,24 @@ enum DiffFormat {
     Json,
 }
 
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum FlamegraphFormat {
+    /// Folded-stacks text: one line per unique stack, frames separated by
+    /// semicolons, weight appended. Compatible with flamegraph.pl, Speedscope,
+    /// and `inferno-flamegraph`.
+    Folded,
+    /// SVG flamegraph rendered by the inferno crate. No external tooling needed.
+    Svg,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum FlamegraphWeight {
+    /// Use Bernstein-corrected estimated bytes (default).
+    Bytes,
+    /// Use raw sample count.
+    Samples,
+}
+
 fn main() {
     let cli = Cli::parse();
     // Each subcommand returns the exit code on success: 0 for plain
@@ -296,6 +351,16 @@ fn main() {
                 }
             },
         ),
+        Cmd::Flamegraph {
+            file,
+            format,
+            weight,
+            span,
+            annotate_spans,
+            output,
+        } => {
+            run_flamegraph(&file, format, weight, span, annotate_spans, output.as_ref()).map(|()| 0)
+        }
         Cmd::Info { file } => run_info(&file).map(|()| 0),
         Cmd::Upload {
             file,
@@ -1637,6 +1702,118 @@ fn render_diff_tree_markdown(summary: &DiffSummary, roots: &[DiffTreeNode], top:
         render_diff_node(root, "", i + 1 == roots.len(), 0, top);
     }
     println!("```");
+}
+
+// ---- flamegraph --------------------------------------------------------
+
+fn run_flamegraph(
+    path: &PathBuf,
+    format: FlamegraphFormat,
+    weight: FlamegraphWeight,
+    span_filter: Option<String>,
+    annotate_spans: bool,
+    output: Option<&PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let profile = load(path)?;
+
+    let function_by_id: HashMap<u64, &proto::Function> =
+        profile.function.iter().map(|f| (f.id, f)).collect();
+    let location_by_id: HashMap<u64, &proto::Location> =
+        profile.location.iter().map(|l| (l.id, l)).collect();
+    let span_name_key = string_index(&profile, "span_name");
+
+    // Aggregate identical folded stacks so inferno gets one line per unique
+    // stack rather than one per raw sample.
+    let mut stacks: HashMap<String, u64> = HashMap::new();
+
+    for sample in &profile.sample {
+        // Skip zero-value synthetic parent-span marker samples.
+        let bytes = sample.value.get(1).copied().unwrap_or(0).max(0) as u64;
+        let count = sample.value.first().copied().unwrap_or(0).max(0) as u64;
+        if bytes == 0 && count == 0 {
+            continue;
+        }
+
+        let span_name = span_name_key.and_then(|k| label_str(sample, k, &profile));
+
+        if let Some(filter) = &span_filter {
+            if span_name != Some(filter.as_str()) {
+                continue;
+            }
+        }
+
+        let w = match weight {
+            FlamegraphWeight::Bytes => bytes,
+            FlamegraphWeight::Samples => count,
+        };
+        if w == 0 {
+            continue;
+        }
+
+        // pprof stores location_id leaf-to-root; reverse for root-to-leaf.
+        let mut frames: Vec<&str> = sample
+            .location_id
+            .iter()
+            .rev()
+            .filter_map(|&id| location_by_id.get(&id))
+            .filter_map(|loc| loc.line.first())
+            .filter_map(|line| function_by_id.get(&line.function_id))
+            .filter_map(|func| {
+                profile
+                    .string_table
+                    .get(func.name as usize)
+                    .map(String::as_str)
+            })
+            .filter(|name| !name.is_empty())
+            .collect();
+
+        if annotate_spans {
+            if let Some(name) = span_name {
+                frames.insert(0, name);
+            }
+        }
+
+        if frames.is_empty() {
+            continue;
+        }
+
+        *stacks.entry(frames.join(";")).or_default() += w;
+    }
+
+    // Sort for stable, reproducible output.
+    let mut lines: Vec<String> = stacks
+        .into_iter()
+        .map(|(stack, w)| format!("{stack} {w}"))
+        .collect();
+    lines.sort();
+
+    let mut out: Box<dyn std::io::Write> = match output {
+        Some(p) => Box::new(std::fs::File::create(p)?),
+        None => Box::new(std::io::stdout()),
+    };
+
+    match format {
+        FlamegraphFormat::Folded => {
+            for line in &lines {
+                writeln!(out, "{line}")?;
+            }
+        }
+        FlamegraphFormat::Svg => {
+            let mut opts = inferno::flamegraph::Options::default();
+            opts.title = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("culpert profile")
+                .to_string();
+            if matches!(weight, FlamegraphWeight::Bytes) {
+                opts.count_name = "bytes".to_string();
+            }
+            inferno::flamegraph::from_lines(&mut opts, lines.iter().map(String::as_str), &mut out)
+                .map_err(|e| format!("inferno flamegraph error: {e}"))?;
+        }
+    }
+
+    Ok(())
 }
 
 // ---- info --------------------------------------------------------------
