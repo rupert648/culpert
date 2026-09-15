@@ -474,6 +474,57 @@ fn build_tree(profile: &proto::Profile) -> Vec<TreeNode> {
         acc.bytes_total = acc.bytes_total.saturating_add(bytes);
     }
 
+    // Group unresolved parents with the same child-name set. Matching just
+    // one child would conflate different workloads; these are parent span
+    // counts, not necessarily request counts.
+    let unknown_prefix = "<unknown:";
+
+    // Find which child names each unknown-named parent has.
+    let mut unknown_children: HashMap<String, std::collections::BTreeSet<String>> = HashMap::new();
+    for (parent, child) in by_pair.keys() {
+        if let Some(p) = parent {
+            if p.starts_with(unknown_prefix) {
+                unknown_children
+                    .entry(p.clone())
+                    .or_default()
+                    .insert(child.clone());
+            }
+        }
+    }
+
+    let mut children_to_unknowns: HashMap<std::collections::BTreeSet<String>, Vec<String>> =
+        HashMap::new();
+    for (unknown_name, children) in unknown_children {
+        children_to_unknowns
+            .entry(children)
+            .or_default()
+            .push(unknown_name);
+    }
+
+    let mut rename: HashMap<String, String> = HashMap::new();
+    for (children, unknowns) in children_to_unknowns {
+        if unknowns.len() > 1 {
+            let label = format!("({} unknown parents → {children:?})", unknowns.len());
+            for unknown in unknowns {
+                rename.insert(unknown, label.clone());
+            }
+        }
+    }
+
+    // Apply renames: rebuild by_pair with merged keys.
+    if !rename.is_empty() {
+        let old = std::mem::take(&mut by_pair);
+        for ((parent, name), acc) in old {
+            // Rename the parent if it's an unknown being merged.
+            let new_parent = parent.map(|p| rename.get(&p).cloned().unwrap_or(p));
+            // Also rename the span itself if it appears as a child's parent ref.
+            let new_name = rename.get(&name).cloned().unwrap_or(name);
+            let entry = by_pair.entry((new_parent, new_name)).or_default();
+            entry.samples = entry.samples.saturating_add(acc.samples);
+            entry.bytes_total = entry.bytes_total.saturating_add(acc.bytes_total);
+        }
+    }
+
     // Index by parent_name -> children
     let mut by_parent: HashMap<Option<String>, Vec<(String, Acc)>> = HashMap::new();
     for ((parent_name, name), acc) in by_pair {

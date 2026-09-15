@@ -6,7 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet._
+### Changed
+
+- **`culpert-cli`**: tree reports merge unresolved parent spans only when their
+  complete child-name sets match, reducing repeated unknown-parent groups without
+  combining different child sets or treating parent counts as request counts.
 
 ## [0.1.2] — 2026-05-20
 

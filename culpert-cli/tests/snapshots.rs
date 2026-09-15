@@ -242,3 +242,59 @@ fn info() {
     let out = scrub(out, &p, "[PROFILE]");
     insta::assert_snapshot!(out);
 }
+
+#[test]
+fn report_groups_unknown_parents_by_all_child_names() {
+    let mut spans = HashMap::new();
+    let mut entries = Vec::new();
+    for (parent, children) in [
+        (1, vec!["parse", "render"]),
+        (2, vec!["render", "parse"]),
+        (3, vec!["parse"]),
+    ] {
+        spans.insert(
+            sid(parent),
+            SpanMetadata {
+                name: format!("<unknown:{parent}>"),
+                parent: None,
+            },
+        );
+        for (index, name) in children.into_iter().enumerate() {
+            let id = sid(parent * 10 + index as u64);
+            spans.insert(
+                id,
+                SpanMetadata {
+                    name: name.into(),
+                    parent: Some(sid(parent)),
+                },
+            );
+            entries.push(ProfileEntry {
+                span: Some(id),
+                frames: vec![],
+                bytes_total: 1_048_576,
+                samples: 16,
+            });
+        }
+    }
+    let profile = Profile {
+        entries,
+        spans,
+        dropped_samples: 0,
+        config: Config {
+            rate_bytes: RATE,
+            ..Default::default()
+        },
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("unknown-parents.pb.gz");
+    std::fs::write(&path, culpert::pprof::encode_gzipped(&profile).unwrap()).unwrap();
+    let output = culpert(&["report", path.to_str().unwrap()]);
+    let merged = output
+        .lines()
+        .find(|line| line.contains("2 unknown parents"))
+        .unwrap();
+    assert!(merged.contains("4.00 MB"), "{output}");
+    assert!(output.contains("<unknown:3>"), "{output}");
+    assert!(!output.contains("<unknown:1>"), "{output}");
+    assert!(!output.contains("<unknown:2>"), "{output}");
+}
