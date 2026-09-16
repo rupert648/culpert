@@ -87,6 +87,7 @@ fn make_profile(parse_bytes: u64, response_bytes: u64) -> Vec<u8> {
 fn culpert(args: &[&str]) -> String {
     let out = Command::new(env!("CARGO_BIN_EXE_culpert"))
         .args(args)
+        .env_remove("CULPERT_MIN_SPAN_BYTES")
         .output()
         .expect("failed to run culpert binary");
     // Allow exit code 1 (regressions found) as well as 0.
@@ -297,4 +298,117 @@ fn report_groups_unknown_parents_by_all_child_names() {
     assert!(output.contains("<unknown:3>"), "{output}");
     assert!(!output.contains("<unknown:1>"), "{output}");
     assert!(!output.contains("<unknown:2>"), "{output}");
+}
+
+#[test]
+fn diff_min_span_bytes_boundaries_and_exit_codes() {
+    const MIB: u64 = 1_048_576;
+    let dir = tempfile::tempdir().unwrap();
+    let before_path = dir.path().join("before.pb.gz");
+    let after_path = dir.path().join("after.pb.gz");
+    for (before, after, delta_min, kind, exit_code) in [
+        (19 * MIB, 19 * MIB + MIB / 2, 4096, "quiet", 0),
+        (19 * MIB, 20 * MIB, 4096, "regression", 1),
+        (20 * MIB, 19 * MIB, 4096, "improvement", 0),
+        (0, 19 * MIB, 4096, "quiet", 0),
+        (0, 20 * MIB, 4096, "new", 1),
+        (19 * MIB, 0, 4096, "quiet", 0),
+        (20 * MIB, 0, 4096, "gone", 0),
+        (30 * MIB, 31 * MIB, 4096, "quiet", 0),
+        (19 * MIB, 20 * MIB, 2 * MIB, "quiet", 0),
+    ] {
+        std::fs::write(&before_path, make_profile(before, 3 * MIB)).unwrap();
+        std::fs::write(&after_path, make_profile(after, 3 * MIB)).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_culpert"))
+            .args([
+                "diff",
+                "--format",
+                "json",
+                "--min-span-bytes",
+                "20971520",
+                "--threshold-bytes",
+                &delta_min.to_string(),
+            ])
+            .arg(&before_path)
+            .arg(&after_path)
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(exit_code),
+            "before={before}, after={after}"
+        );
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let row = json["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["name"] == "parse_input")
+            .unwrap();
+        assert_eq!(row["kind"], kind, "before={before}, after={after}");
+        assert_eq!(json["before"]["total_bytes"], before + 3 * MIB);
+        assert_eq!(json["after"]["total_bytes"], after + 3 * MIB);
+        assert_eq!(json["thresholds"]["min_span_bytes"], 20 * MIB);
+        assert_eq!(json["summary"]["had_regressions"], exit_code == 1);
+    }
+}
+
+#[test]
+fn diff_min_span_bytes_hides_small_rows_in_text_and_markdown() {
+    const MIB: u64 = 1_048_576;
+    let dir = tempfile::tempdir().unwrap();
+    let before_path = dir.path().join("before.pb.gz");
+    let after_path = dir.path().join("after.pb.gz");
+    // The small span has the largest delta, so filtering must happen before --top.
+    std::fs::write(&before_path, make_profile(20 * MIB, 19 * MIB)).unwrap();
+    std::fs::write(&after_path, make_profile(21 * MIB, 0)).unwrap();
+    for format in ["text", "markdown"] {
+        for tree in [false, true] {
+            let mut args = vec![
+                "diff",
+                "--format",
+                format,
+                "--min-span-bytes",
+                "20971520",
+                "--top",
+                "1",
+                before_path.to_str().unwrap(),
+                after_path.to_str().unwrap(),
+            ];
+            if tree {
+                args.push("--tree");
+            }
+            let output = culpert(&args);
+            assert!(output.contains("parse_input"), "{output}");
+            assert!(!output.contains("build_response"), "{output}");
+            assert!(output.contains("39.00 MB"), "{output}");
+            assert!(output.contains("21.00 MB"), "{output}");
+            assert!(output.contains("20.00 MB in either profile"), "{output}");
+        }
+    }
+}
+
+#[test]
+fn diff_min_span_bytes_environment_and_flag_override() {
+    const MIB: u64 = 1_048_576;
+    let dir = tempfile::tempdir().unwrap();
+    let before_path = dir.path().join("before.pb.gz");
+    let after_path = dir.path().join("after.pb.gz");
+    std::fs::write(&before_path, make_profile(10 * MIB, 0)).unwrap();
+    std::fs::write(&after_path, make_profile(15 * MIB, 0)).unwrap();
+    for override_flag in [false, true] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_culpert"));
+        command
+            .env("CULPERT_MIN_SPAN_BYTES", "20971520")
+            .args(["diff", "--format", "json"])
+            .arg(&before_path)
+            .arg(&after_path);
+        if override_flag {
+            command.args(["--min-span-bytes", "0"]);
+        }
+        let output = command.output().unwrap();
+        assert_eq!(output.status.code(), Some(i32::from(override_flag)));
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(json["summary"]["had_regressions"], override_flag);
+    }
 }

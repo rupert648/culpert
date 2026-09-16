@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`culpert-cli`**: `diff --min-span-bytes` / `CULPERT_MIN_SPAN_BYTES` suppress
+  spans below a minimum allocation total in both profiles, independently of
+  delta thresholds. Defaults to disabled; set `20971520` for a 20 MiB cutoff.
+  Filtered spans do not trigger regression failures, and profile totals remain
+  unchanged. Tree output applies the cutoff to inclusive subtree totals.
+
 ### Changed
 
 - **`culpert-cli`**: tree reports merge unresolved parent spans only when their

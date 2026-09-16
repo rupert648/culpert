@@ -276,6 +276,22 @@ $ culpert diff before.pb.gz after.pb.gz --format markdown
 | `encode_response` | 1.53 MB | 4.58 MB | +3.05 MB | +200.00% |
 ```
 
+To suppress spans that allocate less than **20 MiB in both profiles**, add
+`--min-span-bytes 20971520` (default: `0`, disabled). A span reaching exactly
+20 MiB on either side remains eligible, including new and disappeared spans.
+The existing delta-size and percentage gates still apply; whole-profile totals
+include all spans. JSON retains suppressed rows as `quiet`. In `--tree` output,
+the minimum applies to the displayed subtree totals, including children.
+
+```sh
+culpert diff before.pb.gz after.pb.gz --format markdown \
+  --min-span-bytes 20971520 --threshold-bytes 1048576 --threshold-pct 10
+```
+
+CI can set `CULPERT_MIN_SPAN_BYTES=20971520` instead of passing the flag. An
+explicit `--min-span-bytes` overrides the environment, including `0` to disable
+it. CI must install a CLI release containing this option.
+
 ### Stock `pprof` works too
 
 The on-disk format is canonical pprof, so everything in the ecosystem reads

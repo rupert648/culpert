@@ -42,6 +42,7 @@ expression: out
   },
   "thresholds": {
     "bytes": 4096,
+    "min_span_bytes": 0,
     "pct": 5.0
   }
 }

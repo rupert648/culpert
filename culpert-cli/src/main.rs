@@ -79,6 +79,12 @@ enum Cmd {
         #[arg(long, default_value = "4096")]
         threshold_bytes: u64,
 
+        /// Hide spans whose allocated bytes are below this minimum in both profiles.
+        /// Independent of the delta thresholds; 0 disables this filter.
+        /// Tree views use each displayed subtree's totals, including children.
+        #[arg(long, env = "CULPERT_MIN_SPAN_BYTES", default_value = "0")]
+        min_span_bytes: u64,
+
         /// Suppress changes whose absolute relative delta is smaller than this percent.
         /// Combined with --threshold-bytes via AND: both gates must pass.
         #[arg(long, default_value = "5.0")]
@@ -275,6 +281,7 @@ fn main() {
             top,
             threshold_bytes,
             threshold_pct,
+            min_span_bytes,
             format,
             no_fail,
             tree,
@@ -282,8 +289,11 @@ fn main() {
             &before,
             &after,
             top,
-            threshold_bytes,
-            threshold_pct,
+            DiffThresholds {
+                bytes: threshold_bytes,
+                pct: threshold_pct,
+                min_span_bytes,
+            },
             format,
             tree,
         )
@@ -1034,8 +1044,7 @@ fn run_diff(
     before_path: &PathBuf,
     after_path: &PathBuf,
     top: usize,
-    threshold_bytes: u64,
-    threshold_pct: f64,
+    thresholds: DiffThresholds,
     format: DiffFormat,
     tree: bool,
 ) -> Result<bool, Box<dyn std::error::Error>> {
@@ -1088,7 +1097,7 @@ fn run_diff(
             } else {
                 Some(100.0 * delta as f64 / before as f64)
             };
-            let kind = classify(before, after, delta, pct, threshold_bytes, threshold_pct);
+            let kind = classify(before, after, delta, pct, &thresholds);
             DiffRow {
                 name: name.clone(),
                 before,
@@ -1125,8 +1134,7 @@ fn run_diff(
         before_total,
         after_total,
         rate_bytes: before_profile.period.max(1) as u64,
-        threshold_bytes,
-        threshold_pct,
+        thresholds,
         quiet_count,
     };
 
@@ -1162,26 +1170,28 @@ fn classify(
     after: u64,
     delta: i64,
     pct: Option<f64>,
-    threshold_bytes: u64,
-    threshold_pct: f64,
+    thresholds: &DiffThresholds,
 ) -> DiffKind {
+    if before.max(after) < thresholds.min_span_bytes {
+        return DiffKind::Quiet;
+    }
     if before == 0 && after > 0 {
-        return if after >= threshold_bytes {
+        return if after >= thresholds.bytes {
             DiffKind::New
         } else {
             DiffKind::Quiet
         };
     }
     if before > 0 && after == 0 {
-        return if before >= threshold_bytes {
+        return if before >= thresholds.bytes {
             DiffKind::Gone
         } else {
             DiffKind::Quiet
         };
     }
     let abs_bytes = delta.unsigned_abs();
-    let passes_bytes = abs_bytes >= threshold_bytes;
-    let passes_pct = pct.is_some_and(|p| p.abs() >= threshold_pct);
+    let passes_bytes = abs_bytes >= thresholds.bytes;
+    let passes_pct = pct.is_some_and(|p| p.abs() >= thresholds.pct);
     if !(passes_bytes && passes_pct) {
         return DiffKind::Quiet;
     }
@@ -1192,14 +1202,19 @@ fn classify(
     }
 }
 
+struct DiffThresholds {
+    bytes: u64,
+    pct: f64,
+    min_span_bytes: u64,
+}
+
 struct DiffSummary<'a> {
     before_path: &'a PathBuf,
     after_path: &'a PathBuf,
     before_total: u64,
     after_total: u64,
     rate_bytes: u64,
-    threshold_bytes: u64,
-    threshold_pct: f64,
+    thresholds: DiffThresholds,
     quiet_count: usize,
 }
 
@@ -1227,9 +1242,15 @@ fn render_diff_text(summary: &DiffSummary, regressions: &[&DiffRow], improvement
     println!("  rate:    {}/alloc", format_bytes(summary.rate_bytes));
     println!(
         "  filter:  show changes ≥ {} AND ≥ {:.2}%",
-        format_bytes(summary.threshold_bytes),
-        summary.threshold_pct
+        format_bytes(summary.thresholds.bytes),
+        summary.thresholds.pct
     );
+    if summary.thresholds.min_span_bytes > 0 {
+        println!(
+            "  minimum span total: {} in either profile",
+            format_bytes(summary.thresholds.min_span_bytes)
+        );
+    }
     println!();
 
     print_diff_section_text("Regressions", regressions);
@@ -1326,9 +1347,15 @@ fn render_diff_markdown(
     );
     println!(
         "- **filter:** show changes ≥ {} AND ≥ {:.2}%",
-        format_bytes(summary.threshold_bytes),
-        summary.threshold_pct
+        format_bytes(summary.thresholds.bytes),
+        summary.thresholds.pct
     );
+    if summary.thresholds.min_span_bytes > 0 {
+        println!(
+            "- **minimum span total:** {} in either profile",
+            format_bytes(summary.thresholds.min_span_bytes)
+        );
+    }
     println!();
 
     print_diff_section_markdown("Regressions", regressions);
@@ -1439,8 +1466,9 @@ fn render_diff_json(
         },
         "rate_bytes": summary.rate_bytes,
         "thresholds": {
-            "bytes": summary.threshold_bytes,
-            "pct": summary.threshold_pct,
+            "bytes": summary.thresholds.bytes,
+            "pct": summary.thresholds.pct,
+            "min_span_bytes": summary.thresholds.min_span_bytes,
         },
         "rows": rows,
         "summary": {
@@ -1561,7 +1589,21 @@ fn build_diff_subtree(
     nodes
 }
 
-fn render_diff_node(node: &DiffTreeNode, prefix: &str, is_last: bool, depth: usize, top: usize) {
+fn visible_diff_nodes(nodes: &[DiffTreeNode], min_span_bytes: u64) -> Vec<&DiffTreeNode> {
+    nodes
+        .iter()
+        .filter(|node| subtree_diff_before(node).max(subtree_diff_after(node)) >= min_span_bytes)
+        .collect()
+}
+
+fn render_diff_node(
+    node: &DiffTreeNode,
+    prefix: &str,
+    is_last: bool,
+    depth: usize,
+    top: usize,
+    min_span_bytes: u64,
+) {
     let connector = if depth == 0 {
         ""
     } else if is_last {
@@ -1597,14 +1639,22 @@ fn render_diff_node(node: &DiffTreeNode, prefix: &str, is_last: bool, depth: usi
         format!("{prefix}{}", if is_last { "   " } else { "│  " })
     };
 
-    let visible: Vec<&DiffTreeNode> = node.children.iter().take(top).collect();
+    let children = visible_diff_nodes(&node.children, min_span_bytes);
+    let visible: Vec<&DiffTreeNode> = children.iter().copied().take(top).collect();
     for (i, child) in visible.iter().enumerate() {
-        render_diff_node(child, &new_prefix, i + 1 == visible.len(), depth + 1, top);
+        render_diff_node(
+            child,
+            &new_prefix,
+            i + 1 == visible.len(),
+            depth + 1,
+            top,
+            min_span_bytes,
+        );
     }
-    if node.children.len() > top {
+    if children.len() > top {
         println!(
             "{new_prefix}... ({} more children hidden)",
-            node.children.len() - top
+            children.len() - top
         );
     }
 }
@@ -1631,6 +1681,12 @@ fn render_diff_tree_text(summary: &DiffSummary, roots: &[DiffTreeNode], top: usi
         total_pct
     );
     println!("  rate:    {}/alloc", format_bytes(summary.rate_bytes));
+    if summary.thresholds.min_span_bytes > 0 {
+        println!(
+            "  minimum subtree total: {} in either profile",
+            format_bytes(summary.thresholds.min_span_bytes)
+        );
+    }
     println!();
     println!(
         "{:<40}  {:>12}  {:>12}  {:>12}  {:>9}",
@@ -1640,8 +1696,16 @@ fn render_diff_tree_text(summary: &DiffSummary, roots: &[DiffTreeNode], top: usi
         "{:-<40}  {:->12}  {:->12}  {:->12}  {:->9}",
         "", "", "", "", ""
     );
-    for (i, root) in roots.iter().enumerate() {
-        render_diff_node(root, "", i + 1 == roots.len(), 0, top);
+    let visible = visible_diff_nodes(roots, summary.thresholds.min_span_bytes);
+    for (i, root) in visible.iter().enumerate() {
+        render_diff_node(
+            root,
+            "",
+            i + 1 == visible.len(),
+            0,
+            top,
+            summary.thresholds.min_span_bytes,
+        );
     }
 }
 
@@ -1674,6 +1738,12 @@ fn render_diff_tree_markdown(summary: &DiffSummary, roots: &[DiffTreeNode], top:
         "- **sample rate:** {}/alloc",
         format_bytes(summary.rate_bytes)
     );
+    if summary.thresholds.min_span_bytes > 0 {
+        println!(
+            "- **minimum subtree total:** {} in either profile",
+            format_bytes(summary.thresholds.min_span_bytes)
+        );
+    }
     println!();
     println!("```");
     println!(
@@ -1684,8 +1754,16 @@ fn render_diff_tree_markdown(summary: &DiffSummary, roots: &[DiffTreeNode], top:
         "{:-<40}  {:->12}  {:->12}  {:->12}  {:->9}",
         "", "", "", "", ""
     );
-    for (i, root) in roots.iter().enumerate() {
-        render_diff_node(root, "", i + 1 == roots.len(), 0, top);
+    let visible = visible_diff_nodes(roots, summary.thresholds.min_span_bytes);
+    for (i, root) in visible.iter().enumerate() {
+        render_diff_node(
+            root,
+            "",
+            i + 1 == visible.len(),
+            0,
+            top,
+            summary.thresholds.min_span_bytes,
+        );
     }
     println!("```");
 }
