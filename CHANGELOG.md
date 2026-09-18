@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   complete child-name sets match, reducing repeated unknown-parent groups without
   combining different child sets or treating parent counts as request counts.
 
+### Fixed
+
+- **`culpert-foundations`**: allocation sampling no longer deadlocks when an
+  allocation occurs while Foundations holds the current span's write lock.
+  Contended span reads now skip attribution for that sample instead of blocking
+  inside the global allocator.
+
 ## [0.1.2] — 2026-05-20
 
 ### Fixed

@@ -133,7 +133,12 @@ impl FoundationsSpanContext {
 
         // Sampled spans have a non-empty SpanContext from cf-rustracing.
         let arc = rustracing_span()?;
-        let span = arc.read();
+        // This runs from the global allocator, including for allocations made
+        // while foundations is mutating the current span. Never wait for that
+        // application lock: the same thread may already hold its write guard.
+        // Returning `None` only drops span attribution for this sample; culpert
+        // still records the allocation and stack.
+        let span = arc.try_read()?;
         let span_id_u64 = span.context()?.state().span_id();
         let span_id = NonZeroU64::new(span_id_u64)?;
 
@@ -161,5 +166,37 @@ impl FoundationsSpanContext {
             .entry(span_id)
             .or_insert(SpanMetadata { name, parent });
         Some(span_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundations::telemetry::TelemetryContext;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    #[test]
+    fn current_span_does_not_block_on_its_write_lock() {
+        let (result_tx, result_rx) = mpsc::channel();
+
+        let worker = std::thread::spawn(move || {
+            let test_ctx = TelemetryContext::test();
+            let _ctx_scope = test_ctx.scope();
+            let _span_scope = foundations::telemetry::tracing::span("contended_span");
+            let span = rustracing_span().expect("test span should be active");
+            let _write_guard = span.write();
+
+            let context = FoundationsSpanContext::new();
+            result_tx
+                .send(SpanContext::current_span(&context))
+                .expect("test receiver should remain connected");
+        });
+
+        let result = result_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("current_span must not wait on a contended foundations span lock");
+        assert_eq!(result, None);
+        worker.join().expect("test worker should not panic");
     }
 }
