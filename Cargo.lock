@@ -501,7 +501,7 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "culpert"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "backtrace",
  "criterion",
@@ -519,7 +519,7 @@ dependencies = [
 
 [[package]]
 name = "culpert-cli"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "clap",
  "culpert",
@@ -531,7 +531,7 @@ dependencies = [
 
 [[package]]
 name = "culpert-foundations"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "criterion",
  "culpert",
@@ -542,7 +542,7 @@ dependencies = [
 
 [[package]]
 name = "culpert-macros"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -551,7 +551,7 @@ dependencies = [
 
 [[package]]
 name = "culpert-tracing"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "culpert",
  "tracing",
@@ -731,7 +731,7 @@ dependencies = [
 
 [[package]]
 name = "example-foundations"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "culpert",
  "foundations",
@@ -740,14 +740,14 @@ dependencies = [
 
 [[package]]
 name = "example-macros"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "culpert",
 ]
 
 [[package]]
 name = "example-macros-async"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "culpert",
  "tokio",
@@ -755,7 +755,7 @@ dependencies = [
 
 [[package]]
 name = "example-tracing"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "culpert",
  "tracing",
@@ -1504,7 +1504,7 @@ dependencies = [
 
 [[package]]
 name = "mock-axum"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "axum",
  "culpert",

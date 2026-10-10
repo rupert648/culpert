@@ -14,7 +14,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.6"
+version = "0.2.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/rupert648/culpert"
@@ -24,10 +24,10 @@ categories = ["development-tools::profiling", "memory-management"]
 
 [workspace.dependencies]
 # Internal crates
-culpert = { path = "culpert", version = "0.1.6" }
-culpert-foundations = { path = "culpert-foundations", version = "0.1.6" }
-culpert-tracing = { path = "culpert-tracing", version = "0.1.6" }
-culpert-macros = { path = "culpert-macros", version = "0.1.6" }
+culpert = { path = "culpert", version = "0.2.0" }
+culpert-foundations = { path = "culpert-foundations", version = "0.2.0" }
+culpert-tracing = { path = "culpert-tracing", version = "0.2.0" }
+culpert-macros = { path = "culpert-macros", version = "0.2.0" }
 
 backtrace = "0.3"
 fastrand = "2.4.1"
