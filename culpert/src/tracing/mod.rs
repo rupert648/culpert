@@ -66,14 +66,12 @@ pub fn layer() -> CulpertLayer {
 /// [`crate::install`]). Keep the returned [`ProfilerGuard`] alive while
 /// allocations should be recorded.
 #[track_caller]
-#[must_use]
 pub fn install() -> ProfilerGuard {
     install_with_config(Config::default())
 }
 
 /// As [`install`], but with a caller-supplied [`Config`].
 #[track_caller]
-#[must_use]
 pub fn install_with_config(config: Config) -> ProfilerGuard {
     crate::install(TracingSpanContext::from_shared(shared().clone()), config)
 }

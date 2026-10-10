@@ -78,7 +78,6 @@ impl Drop for ProfilerGuard {
 ///
 /// Panics if called more than once. This mirrors `foundations::telemetry::init`.
 #[track_caller]
-#[must_use]
 pub fn install<C: SpanContext>(ctx: C, config: Config) -> ProfilerGuard {
     crate::debug::dbglog!(
         "install: rate_bytes={}, stack_depth={}, buffer_capacity={}",

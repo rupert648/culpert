@@ -53,7 +53,6 @@ use crate::{Config, ProfilerGuard};
 /// called more than once (delegates to [`crate::install`]). Keep the returned
 /// [`ProfilerGuard`] alive while allocations should be recorded.
 #[track_caller]
-#[must_use]
 pub fn install() -> ProfilerGuard {
     install_with_config(Config::default())
 }
@@ -67,7 +66,6 @@ pub fn install() -> ProfilerGuard {
 /// any other panic. See `context::install_panic_hook_filter` for the
 /// details.
 #[track_caller]
-#[must_use]
 pub fn install_with_config(config: Config) -> ProfilerGuard {
     context::install_panic_hook_filter();
     crate::install(FoundationsSpanContext::new(), config)
