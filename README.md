@@ -13,7 +13,7 @@ and CI-friendly diffs, helping catch allocation regressions before release.
 
 It integrates with `tracing`, Cloudflare Foundations, or its own
 `#[culpert::span_fn]` macro. Culpert has already caught several real allocation
-regressions, including a memory leak, before they reached production.
+regressions, including a memory leak, before they reached production at cloudflare!
 
 ## What is it?
 
