@@ -60,12 +60,12 @@ What landed:
 - Foundations integration test now asserts parent extraction
   end-to-end.
 
-#### 3. `culpert-tracing` adapter — **shipped**
+#### 3. `tracing` integration — **shipped**
 
-A new `culpert-tracing` crate mirroring the foundations adapter:
-`culpert_tracing::layer()` returns a `tracing_subscriber::Layer` that
+A `culpert` feature mirroring the foundations integration:
+`culpert::tracing::layer()` returns a `tracing_subscriber::Layer` that
 captures span name + parent at creation time, and
-`culpert_tracing::install()` registers a `TracingSpanContext` that
+`culpert::tracing::install()` registers a `TracingSpanContext` that
 resolves `tracing::Span::current().id()` plus the layer-captured
 metadata. Compose the layer into the subscriber stack alongside
 whatever other layers the user already has.

@@ -27,8 +27,10 @@ pub struct SpanMetadata {
 /// Implementors:
 ///
 /// - [`crate::MockSpanContext`] — deterministic, in-process; for tests.
-/// - `culpert_foundations::FoundationsSpanContext` (separate crate) — reads
-///   from `foundations::telemetry::TelemetryContext`.
+/// - [`crate::foundations::FoundationsSpanContext`] (with the `foundations`
+///   feature) — reads from `foundations::telemetry::TelemetryContext`.
+/// - [`crate::tracing::TracingSpanContext`] (with the `tracing` feature) —
+///   reads the current `tracing` span.
 ///
 /// # Hot-path constraints
 ///

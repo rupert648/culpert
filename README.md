@@ -45,8 +45,8 @@ Three integration paths — pick whichever matches your service:
 
 | Your service uses… | Adapter | Cost |
 |---|---|---|
-| [`foundations`](https://github.com/cloudflare/foundations) | `culpert-foundations` | Zero instrumentation change. Existing `#[span_fn]` annotations become attribution keys. |
-| The [`tracing`](https://crates.io/crates/tracing) crate | `culpert-tracing` | Compose a `tracing_subscriber::Layer` into your subscriber stack. Existing `#[tracing::instrument]` annotations become attribution keys. |
+| [`foundations`](https://github.com/cloudflare/foundations) | `culpert`'s `foundations` feature | Zero instrumentation change. Existing `#[span_fn]` annotations become attribution keys. |
+| The [`tracing`](https://crates.io/crates/tracing) crate | `culpert`'s `tracing` feature | Compose a `tracing_subscriber::Layer` into your subscriber stack. Existing `#[tracing::instrument]` annotations become attribution keys. |
 | Neither, or you want attribution independent of trace sampling | `culpert::scope` + `#[culpert::span_fn]` | One macro on the functions you want attributed. No external tracer. |
 
 ## Install
@@ -54,9 +54,9 @@ Three integration paths — pick whichever matches your service:
 Library:
 
 ```sh
-cargo add culpert                # core
-cargo add culpert-foundations    # if your service uses foundations
-cargo add culpert-tracing        # if your service uses the tracing crate
+cargo add culpert                              # standalone
+cargo add culpert --features foundations       # with foundations
+cargo add culpert --features tracing           # with tracing
 ```
 
 `culpert-macros` is re-exported by `culpert` (don't depend on it directly).
@@ -116,8 +116,7 @@ See `examples/macros` for a runnable version.
 
 ```toml
 [dependencies]
-culpert              = "0.1.6"
-culpert-foundations  = "0.1.6"
+culpert = { version = "0.1.6", features = ["foundations"] }
 foundations = { version = "5", default-features = false, features = ["tracing", "telemetry-server"] }
 ```
 
@@ -135,11 +134,11 @@ async fn main() {
         service_info: &service_info!(),
         settings: &settings.telemetry,
         custom_server_routes: vec![
-            culpert_foundations::pprof_route("/debug/alloc/profile"),
+            culpert::foundations::pprof_route("/debug/alloc/profile"),
         ],
     }).unwrap();
 
-    culpert_foundations::install();
+    culpert::foundations::install();
 
     // ... your existing app, with #[span_fn] annotations as usual.
 }
@@ -153,8 +152,7 @@ attribution keys for free. See `examples/foundations` (minimal) and
 
 ```toml
 [dependencies]
-culpert            = "0.1"
-culpert-tracing    = "0.1"
+culpert            = { version = "0.1.6", features = ["tracing"] }
 tracing            = "0.1"
 tracing-subscriber = "0.3"
 ```
@@ -167,11 +165,11 @@ static GLOBAL: TrackingAllocator<System> = TrackingAllocator::new(System);
 
 fn main() {
     tracing_subscriber::registry()
-        .with(culpert_tracing::layer())
+        .with(culpert::tracing::layer())
         .with(/* your other layers — fmt, OTLP, etc. */)
         .init();
 
-    culpert_tracing::install();
+    culpert::tracing::install();
 
     // ... your existing app, with #[tracing::instrument] annotations as usual.
 }
@@ -365,9 +363,9 @@ integration path:
 
 | Example | What it shows | Key wiring |
 |---------|---------------|------------|
-| [`mock-axum`](examples/mock-axum) | foundations + axum service with `/debug/alloc/profile` HTTP endpoint, plus a load script | `foundations::telemetry::init` + `culpert_foundations::pprof_route` + `#[foundations::span_fn]` |
-| [`foundations`](examples/foundations) | minimal foundations wiring without an HTTP server — just init, work, snapshot, write | `culpert_foundations::install` + `#[foundations::span_fn]` |
-| [`tracing`](examples/tracing) | `tracing` crate integration via `tracing_subscriber::Layer` | `culpert_tracing::layer()` composed into a Registry + `#[tracing::instrument]` |
+| [`mock-axum`](examples/mock-axum) | foundations + axum service with `/debug/alloc/profile` HTTP endpoint, plus a load script | `foundations::telemetry::init` + `culpert::foundations::pprof_route` + `#[foundations::span_fn]` |
+| [`foundations`](examples/foundations) | minimal foundations wiring without an HTTP server — just init, work, snapshot, write | `culpert::foundations::install` + `#[foundations::span_fn]` |
+| [`tracing`](examples/tracing) | `tracing` crate integration via `tracing_subscriber::Layer` | `culpert::tracing::layer()` composed into a Registry + `#[tracing::instrument]` |
 | [`macros`](examples/macros) | sampling-independent attribution with no external tracer; also doubles as a BT-vs-FP timing demo (set `CULPERT_FP=1`) | `culpert::LocalSpanContext` + `#[culpert::span_fn]` |
 
 Each prints a profile to `/tmp/example-*.pb.gz`. View with

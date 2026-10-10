@@ -18,12 +18,7 @@ version = "0.1.6"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/rupert648/culpert"
-# Workspace-relative path. cargo's inheritance machinery resolves this
-# against the workspace root, so each sub-crate's `readme.workspace =
-# true` ends up pointing at the same shared README.md.
 readme = "README.md"
-# Five-keyword cap (crates.io limit). Shared across all crates — they
-# all live in the same profiling / memory-tracing problem space.
 keywords = ["profiling", "allocation", "heap", "pprof", "tracing"]
 categories = ["development-tools::profiling", "memory-management"]
 
@@ -34,47 +29,23 @@ culpert-foundations = { path = "culpert-foundations", version = "0.1.6" }
 culpert-tracing = { path = "culpert-tracing", version = "0.1.6" }
 culpert-macros = { path = "culpert-macros", version = "0.1.6" }
 
-# culpert core deps
 backtrace = "0.3"
 fastrand = "2.4.1"
 parking_lot = "0.12"
 smallvec = "1"
-# pprof export (Phase 2)
 flate2 = "1"
 prost = "0.14"
-
-# foundations: pin lean feature set; full `telemetry` pulls jemalloc/sentry/etc.
-# `tracing` gives us TelemetryContext, span_fn, WithTelemetryContext.
-# `telemetry-server` gives us TelemetryServerRoute for the pprof endpoint.
 foundations = { version = "5", default-features = false, features = ["tracing", "telemetry-server"] }
 tikv-jemallocator = "0.6"
-
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "signal"] }
-
-# mock-axum example deps
 axum = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-
-# culpert-cli deps
-# `env` lets clap args read from environment variables as fallbacks
-# (used for $CULPERT_ARCHIVE / $CULPERT_TOKEN / $GITHUB_SHA / etc. in
-# the `upload` and `pull` subcommands).
 clap = { version = "4", features = ["derive", "env"] }
-# Sync HTTP client for `culpert upload` / `culpert pull` against
-# culpert-archive. `rustls-tls` so we don't carry a native OpenSSL
-# dependency on CI runners.
 ureq = { version = "2", default-features = false, features = ["tls"] }
-
-# benches
 criterion = { version = "0.7", features = ["html_reports"] }
-
-# culpert-tracing adapter deps
 tracing = "0.1"
-tracing-core = "0.1"
 tracing-subscriber = "0.3"
-
-# culpert-macros proc-macro deps
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full"] }

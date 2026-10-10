@@ -1,19 +1,19 @@
 //! [`CulpertLayer`] — `tracing_subscriber::Layer` that snapshots span
 //! metadata at creation time.
 
-use crate::shared::Shared;
-use culpert::{SpanId, SpanMetadata};
+use super::shared::Shared;
+use crate::{SpanId, SpanMetadata};
+use ::tracing::span::{Attributes, Id};
+use ::tracing_subscriber::layer::Context;
+use ::tracing_subscriber::registry::LookupSpan;
+use ::tracing_subscriber::Layer;
 use std::num::NonZeroU64;
 use std::sync::Arc;
-use tracing::span::{Attributes, Id};
-use tracing_subscriber::layer::Context;
-use tracing_subscriber::registry::LookupSpan;
-use tracing_subscriber::Layer;
 
 /// Subscriber layer that records each span's `name` and parent `SpanId` in
 /// culpert's shared metadata map.
 ///
-/// Construct via [`crate::layer()`]; compose with whatever other
+/// Construct via [`super::layer()`]; compose with whatever other
 /// `tracing_subscriber::Layer`s you use.
 pub struct CulpertLayer {
     shared: Arc<Shared>,
@@ -27,7 +27,7 @@ impl CulpertLayer {
 
 impl<S> Layer<S> for CulpertLayer
 where
-    S: tracing::Subscriber + for<'a> LookupSpan<'a>,
+    S: ::tracing::Subscriber + for<'a> LookupSpan<'a>,
 {
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
         // tracing::span::Id is documented to be non-zero, but defend.

@@ -1,10 +1,10 @@
 //! [`pprof_route`] — builder for the `TelemetryServerRoute` that serves
 //! culpert's gzipped pprof profile.
 
-use foundations::telemetry::reexports::http_body_util::{BodyExt, Full};
-use foundations::telemetry::reexports::hyper::body::Bytes;
-use foundations::telemetry::reexports::hyper::{header, Method, Response, StatusCode};
-use foundations::telemetry::TelemetryServerRoute;
+use ::foundations::telemetry::reexports::http_body_util::{BodyExt, Full};
+use ::foundations::telemetry::reexports::hyper::body::Bytes;
+use ::foundations::telemetry::reexports::hyper::{header, Method, Response, StatusCode};
+use ::foundations::telemetry::TelemetryServerRoute;
 use std::convert::Infallible;
 
 /// Build a [`TelemetryServerRoute`] that serves a gzipped pprof profile of
@@ -18,7 +18,7 @@ use std::convert::Infallible;
 /// pprof -http=:8081 prof.pb.gz
 /// ```
 ///
-/// The handler calls [`culpert::snapshot`] each time it's hit. Snapshots are
+/// The handler calls [`crate::snapshot`] each time it's hit. Snapshots are
 /// destructive (they drain the per-thread sample buffers), so back-to-back
 /// requests will produce empty responses if no allocations happened in between.
 ///
@@ -31,8 +31,8 @@ pub fn pprof_route(path: &str) -> TelemetryServerRoute {
         methods: vec![Method::GET],
         handler: Box::new(|_req, _settings| {
             Box::pin(async move {
-                let profile = culpert::snapshot();
-                let resp: Result<_, Infallible> = match culpert::pprof::encode_gzipped(&profile) {
+                let profile = crate::snapshot();
+                let resp: Result<_, Infallible> = match crate::pprof::encode_gzipped(&profile) {
                     Ok(bytes) => Ok(Response::builder()
                         .status(StatusCode::OK)
                         .header(header::CONTENT_TYPE, "application/x-gperftools-profile")

@@ -27,41 +27,13 @@ pub(crate) fn config() -> Option<&'static Config> {
     PROFILER.get().map(|p| &p.config)
 }
 
-/// Process-wide "we are exiting" flag. Set from a `libc::atexit` handler
-/// registered by [`install`]. Observers read this and bail before
-/// invoking anything that might recursively lock a `std::sync::Mutex`
-/// held by a TLS destructor — see `is_shutting_down`'s doc-comment for
-/// the deadlock this prevents.
 static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
 
-/// Has the process started its `exit()` teardown?
-///
-/// Two ways this flips to `true`:
-///
-/// 1. A `libc::atexit` handler registered by [`install`]. On platforms
-///    where `atexit` callbacks run before TLS destructors (most Unixes,
-///    Windows), this catches the teardown path automatically.
-/// 2. An explicit [`shutdown`] call from user code. Required on macOS
-///    where `dyld4`'s TLS finalizers run before C-runtime `atexit`
-///    handlers, so the automatic path doesn't fire in time.
-///
-/// Observers ([`crate::sampler::observe`]) read this and short-circuit,
-/// avoiding a recursive-Mutex deadlock when an allocation triggered by
-/// a TLS destructor would otherwise re-lock a `std::sync::Mutex` the
-/// destructor itself is holding (notably the `thread_local` crate's
-/// `THREAD_ID_MANAGER`).
 #[inline]
 pub(crate) fn is_shutting_down() -> bool {
     SHUTTING_DOWN.load(Ordering::Relaxed)
 }
 
-/// Mark culpert as shutting down. Future calls to the observer will
-/// short-circuit immediately. Call this from your service's shutdown
-/// path before letting `main` return, to make process teardown
-/// deterministic on platforms where the automatic atexit-based detection
-/// doesn't fire in time (notably macOS).
-///
-/// One-way: there's no "un-shutdown".
 pub fn shutdown() {
     SHUTTING_DOWN.store(true, Ordering::Relaxed);
 }

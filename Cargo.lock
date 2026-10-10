@@ -508,10 +508,13 @@ dependencies = [
  "culpert-macros",
  "fastrand",
  "flate2",
+ "foundations",
  "parking_lot",
  "prost",
  "smallvec",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -533,7 +536,6 @@ dependencies = [
  "criterion",
  "culpert",
  "foundations",
- "parking_lot",
  "tikv-jemallocator",
  "tokio",
 ]
@@ -552,9 +554,7 @@ name = "culpert-tracing"
 version = "0.1.6"
 dependencies = [
  "culpert",
- "parking_lot",
  "tracing",
- "tracing-core",
  "tracing-subscriber",
 ]
 
@@ -734,7 +734,6 @@ name = "example-foundations"
 version = "0.1.6"
 dependencies = [
  "culpert",
- "culpert-foundations",
  "foundations",
  "tokio",
 ]
@@ -759,7 +758,6 @@ name = "example-tracing"
 version = "0.1.6"
 dependencies = [
  "culpert",
- "culpert-tracing",
  "tracing",
  "tracing-subscriber",
 ]
@@ -1510,7 +1508,6 @@ version = "0.1.6"
 dependencies = [
  "axum",
  "culpert",
- "culpert-foundations",
  "foundations",
  "serde",
  "serde_json",

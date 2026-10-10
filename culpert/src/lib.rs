@@ -1,9 +1,9 @@
 //! culpert — per-span heap allocation profiler core.
 //!
 //! Sampled, per-`(span, callsite)` allocation attribution. Span source is
-//! pluggable via the [`SpanContext`] trait; the production adapter is
-//! `culpert-foundations`, which reads from `foundations::telemetry`. Tests
-//! use [`MockSpanContext`].
+//! pluggable via the [`SpanContext`] trait. Enable the `foundations` or
+//! `tracing` feature to use an existing telemetry stack, or use
+//! [`LocalSpanContext`] for standalone instrumentation.
 //!
 //! # End-user shape
 //!
@@ -16,7 +16,7 @@
 //!
 //! fn main() {
 //!     foundations::telemetry::init(...).unwrap();
-//!     culpert_foundations::install();   // wires culpert::install internally
+//!     culpert::foundations::install(); // wires culpert::install internally
 //!     // ...
 //! }
 //! ```
@@ -74,6 +74,11 @@ mod rng;
 mod sample;
 mod sampler;
 mod thread_state;
+
+#[cfg(feature = "foundations")]
+pub mod foundations;
+#[cfg(feature = "tracing")]
+pub mod tracing;
 
 // Debug logging gated by CULPERT_DEBUG=1 in env. Read once at startup; the
 // hot-path check is one Relaxed atomic load.

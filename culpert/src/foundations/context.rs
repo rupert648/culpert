@@ -17,9 +17,9 @@
 //! only attaches a span context (and therefore a span_id) to sampled
 //! spans. The gate is cheap (single thread-local read).
 
-use culpert::{SpanContext, SpanId, SpanMetadata};
-use foundations::reexports_for_macros::cf_rustracing::span::InspectableSpan;
-use foundations::telemetry::tracing::{rustracing_span, span_is_sampled};
+use crate::{SpanContext, SpanId, SpanMetadata};
+use ::foundations::reexports_for_macros::cf_rustracing::span::InspectableSpan;
+use ::foundations::telemetry::tracing::{rustracing_span, span_is_sampled};
 use parking_lot::RwLock;
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -55,7 +55,7 @@ pub(crate) fn install_panic_hook_filter() {
 /// `culpert::SpanContext` implementation backed by foundations' tracing.
 ///
 /// Construct with [`FoundationsSpanContext::new`] and pass to
-/// [`culpert::install`], or use the [`crate::install`] convenience.
+/// [`crate::install`], or use the [`super::install`] convenience.
 pub struct FoundationsSpanContext {
     /// Span metadata keyed by cf-rustracing's `span_id`. Filled lazily on
     /// first sight of a span; cleared when the user calls [`Self::clear_metadata`].
@@ -172,7 +172,7 @@ impl FoundationsSpanContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundations::telemetry::TelemetryContext;
+    use ::foundations::telemetry::TelemetryContext;
     use std::sync::mpsc;
     use std::time::Duration;
 
@@ -183,7 +183,7 @@ mod tests {
         let worker = std::thread::spawn(move || {
             let test_ctx = TelemetryContext::test();
             let _ctx_scope = test_ctx.scope();
-            let _span_scope = foundations::telemetry::tracing::span("contended_span");
+            let _span_scope = ::foundations::telemetry::tracing::span("contended_span");
             let span = rustracing_span().expect("test span should be active");
             let _write_guard = span.write();
 

@@ -1,7 +1,7 @@
-//! Smallest viable culpert + culpert-foundations example.
+//! Smallest viable culpert + foundations example.
 //!
 //! Demonstrates the canonical wiring without spinning up an HTTP server:
-//! `foundations::telemetry::init` → `culpert_foundations::install` →
+//! `foundations::telemetry::init` → `culpert::foundations::install` →
 //! work inside `#[span_fn]`-instrumented functions → snapshot → write
 //! a pprof file. See `examples/mock-axum` for the full HTTP-serving
 //! version with the `/debug/alloc/profile` route.
@@ -38,7 +38,7 @@ async fn main() {
     })
     .expect("foundations init");
 
-    culpert_foundations::install_with_config(Config {
+    culpert::foundations::install_with_config(Config {
         rate_bytes: 4 * 1024,
         stack_depth: 32,
         buffer_capacity: 1 << 16,

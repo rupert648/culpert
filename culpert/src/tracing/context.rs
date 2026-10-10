@@ -1,16 +1,16 @@
 //! [`TracingSpanContext`] — `culpert::SpanContext` impl backed by
 //! `tracing::Span::current()` for the hot-path id lookup and the shared
-//! metadata map filled by [`crate::CulpertLayer`] for snapshot-time
+//! metadata map filled by [`super::CulpertLayer`] for snapshot-time
 //! metadata.
 
-use crate::shared::Shared;
-use culpert::{SpanContext, SpanId, SpanMetadata};
+use super::shared::Shared;
+use crate::{SpanContext, SpanId, SpanMetadata};
 use std::num::NonZeroU64;
 use std::sync::Arc;
 
-/// [`culpert::SpanContext`] implementation backed by the `tracing` crate.
+/// [`crate::SpanContext`] implementation backed by the `tracing` crate.
 ///
-/// Use [`crate::install`] / [`crate::install_with_config`] for the typical
+/// Use [`super::install`] / [`super::install_with_config`] for the typical
 /// case. Construct directly only if you need to wire culpert manually
 /// (e.g. a composite SpanContext mixing tracing + foundations).
 pub struct TracingSpanContext {
@@ -29,7 +29,7 @@ impl SpanContext for TracingSpanContext {
         // returns `Option<Id>` where `Id` is a non-zero `u64`. Both are
         // alloc-free in steady state on the tested subscribers
         // (tracing-subscriber's Registry).
-        let id = tracing::Span::current().id()?;
+        let id = ::tracing::Span::current().id()?;
         NonZeroU64::new(id.into_u64())
     }
 
@@ -38,7 +38,7 @@ impl SpanContext for TracingSpanContext {
     }
 
     fn on_snapshot(&self) {
-        // Same rationale as in `culpert_foundations::FoundationsSpanContext`:
+        // Same rationale as in `crate::foundations::FoundationsSpanContext`:
         // `CulpertLayer::on_new_span` inserts one entry per tracing::span::Id
         // observed, and tracing-subscriber's Registry mints a fresh Id per
         // span instance. Without eviction the map grows for the process

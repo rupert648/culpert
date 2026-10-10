@@ -7,12 +7,10 @@ repository.workspace = true
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "foundations adapter for culpert: maps TelemetryContext spans into culpert's SpanContext and provides a TelemetryServerRoute for serving pprof profiles."
+description = "Compatibility crate for culpert's built-in foundations integration."
 
 [dependencies]
-culpert = { workspace = true }
-foundations = { workspace = true }
-parking_lot = { workspace = true }
+culpert = { workspace = true, features = ["foundations"] }
 
 [dev-dependencies]
 # `testing` for TelemetryContext::test() in integration tests.

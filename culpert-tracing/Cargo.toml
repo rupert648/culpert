@@ -7,11 +7,11 @@ repository.workspace = true
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "tracing-crate adapter for culpert: maps tracing::Span IDs into culpert's SpanContext via a tracing_subscriber::Layer."
+description = "Compatibility crate for culpert's built-in tracing integration."
 
 [dependencies]
-culpert = { workspace = true }
-parking_lot = { workspace = true }
+culpert = { workspace = true, features = ["tracing"] }
+
+[dev-dependencies]
 tracing = { workspace = true }
-tracing-core = { workspace = true }
 tracing-subscriber = { workspace = true }

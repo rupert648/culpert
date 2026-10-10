@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The `foundations` and `tracing` integrations are now optional `culpert`
+  features, exposed as `culpert::foundations` and `culpert::tracing`. The old
+  adapter crates remain as compatibility re-exports.
 - **`culpert-cli`**: tree reports merge unresolved parent spans only when their
   complete child-name sets match, reducing repeated unknown-parent groups without
   combining different child sets or treating parent counts as request counts.

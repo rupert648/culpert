@@ -4,14 +4,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "Minimal culpert + culpert-foundations wiring example (no HTTP server)."
+description = "Minimal culpert foundations-feature wiring example (no HTTP server)."
 
 [[bin]]
 name = "example-foundations"
 path = "src/main.rs"
 
 [dependencies]
-culpert = { workspace = true }
-culpert-foundations = { workspace = true }
+culpert = { workspace = true, features = ["foundations"] }
 foundations = { workspace = true }
 tokio = { workspace = true }

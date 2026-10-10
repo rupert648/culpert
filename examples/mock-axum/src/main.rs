@@ -44,7 +44,7 @@ async fn main() {
 
     let mut settings = TelemetrySettings::default();
     // Default tracing settings already enable Active(1.0) sampling, which is
-    // what culpert-foundations needs for span attribution to work.
+    // what culpert's foundations integration needs for span attribution.
     // (See notes.md Q2 — the unsampled / inactive path is gated out.)
     settings.server.enabled = true;
     let bind: SocketAddr = format!("127.0.0.1:{TELEMETRY_PORT}").parse().unwrap();
@@ -53,7 +53,7 @@ async fn main() {
     let driver = init(TelemetryConfig {
         service_info: &service_info!(),
         settings: &settings,
-        custom_server_routes: vec![culpert_foundations::pprof_route("/debug/alloc/profile")],
+        custom_server_routes: vec![culpert::foundations::pprof_route("/debug/alloc/profile")],
     })
     .expect("foundations::telemetry::init failed");
 
@@ -62,7 +62,7 @@ async fn main() {
     // Counter-mod sampling biases against small-but-frequent allocations
     // when a heavy allocator (here `/vec`) is in the same workload — at
     // 512 KiB the heavy allocator consumes most of the sample budget.
-    culpert_foundations::install_with_config(culpert::Config {
+    culpert::foundations::install_with_config(culpert::Config {
         rate_bytes: 4 * 1024,
         stack_depth: 32,
         buffer_capacity: 1 << 16,

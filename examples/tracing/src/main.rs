@@ -1,8 +1,8 @@
-//! Smallest viable culpert + culpert-tracing example.
+//! Smallest viable culpert + tracing example.
 //!
 //! Demonstrates the canonical wiring for the `tracing` crate ecosystem:
-//! compose `culpert_tracing::layer()` into a `tracing_subscriber`
-//! Registry → `culpert_tracing::install` → work inside
+//! compose `culpert::tracing::layer()` into a `tracing_subscriber`
+//! Registry → `culpert::tracing::install` → work inside
 //! `#[tracing::instrument]`-annotated functions → snapshot → write a
 //! pprof file.
 //!
@@ -23,14 +23,14 @@ use tracing_subscriber::util::SubscriberInitExt;
 static GLOBAL: TrackingAllocator<System> = TrackingAllocator::new(System);
 
 fn main() {
-    // Compose culpert-tracing's layer into a Registry. Add your own
+    // Compose culpert's tracing layer into a Registry. Add your own
     // fmt / OTLP / etc. layers alongside it; the Registry has to be
     // present for LookupSpan-based parent resolution.
     tracing_subscriber::registry()
-        .with(culpert_tracing::layer())
+        .with(culpert::tracing::layer())
         .init();
 
-    culpert_tracing::install_with_config(Config {
+    culpert::tracing::install_with_config(Config {
         rate_bytes: 4 * 1024,
         stack_depth: 32,
         buffer_capacity: 1 << 16,
