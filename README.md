@@ -7,39 +7,22 @@
 
 > Per-span heap allocation profiler for Rust services.
 
-The rust ecosystem already has many great tools for continous benchmarking, take https://bencher.dev/ as one example.
-However I felt it was lacking in an easy to use tool to get the same kind of results for allocation performance/regressions. At my day job
-we run some pretty hot, high load systems where memory usage is important. We already make extensive use of CPU/heap profiling in production,
-but I wanted an earlier feedback loop before the code even hits prod.
+Culpert is a sampled heap-allocation profiler for Rust libraries and services. It
+attributes allocations to existing spans and exports pprof-compatible profiles
+and CI-friendly diffs, helping catch allocation regressions before release.
 
-Initially, I just chucked a script to pull down the profile at the end of a long running acceptance test run and did some analysis on the pprof generated, but
-analysing this, and crucially comparing it to previous runs was a bit of a pain. If I wanted to check the hot paths or see the function stacks we cared
-about, I had to maintain a hand crafted lift of these function names then have some cursed bash script to build the necessary pprof commands.
-In my opinion, this was immediate code smell and extra maintenance burden. We already know which functions performance we care about - we trace them!
+It integrates with `tracing`, Cloudflare Foundations, or its own
+`#[culpert::span_fn]` macro. Culpert has already caught several real allocation
+regressions, including a memory leak, before they reached production.
 
-Hence I built culpert (cul~prit~pert). Below gives technical schpiel/a technical definition of what it does, but essentially it acts as a heap profiler
-which automatically tags allocation samples with their already existing spans - from tracing, foundations or the in house culpert macro. It then ships
-a CLI for beautiful diffing so you can compare and contrast heap allocations on your important functions between runs, with no extra config.
-
-See [culpert-archive](https://github.com/rupert648/culpert-archive) for an example cloudflare worker for storing the collected pprofs based on commit hash, such that you can bake this stuff
-into CI. I also then provide an [example action](https://github.com/rupert648/culpert/blob/main/.github/actions/culpert-diff/action.yml) so you can see how this could
-be integrated into your CI.
-
-Culpert has already helped us capture multiple allocation regressions and even a memory leak before we hit production. We can, at a glance
-decide if a regression in allocations is intentional and worthwhile, and likewise see if our efforts to reduce allocations pay off.
-
-I'd also like to note that this, more than anything, was a learning project for myself to understand the world of heap allocations and stack tracing. This
-was built, and is maintained, in my free time. That said, if you have any feature requests or find any bugs, please open an issue.
-
-## What is it.
+## What is it?
 
 A `#[global_allocator]` wrapper that attributes every sampled allocation to
 the **span** it happened inside, exports pprof-format profiles so the
 existing tool ecosystem (stock `pprof`, Speedscope, Pyroscope, Polar Signals)
 keeps working, and ships a CLI with unbiased per-span reports plus a `diff`
-subcommand for CI/PR workflows. Geometric sampling with the Bernstein
-correction means `bytes` figures are directly meaningful — no separate
-"raw vs estimated" columns to interpret.
+subcommand for CI/PR workflows. Geometric sampling with Bernstein correction
+provides unbiased allocation estimates while keeping profiling overhead low.
 
 Three integration paths — pick whichever matches your service:
 
@@ -81,7 +64,7 @@ The smallest viable setup. No external tracer:
 
 ```toml
 [dependencies]
-culpert = "0.1.6"
+culpert = "0.2.1"
 ```
 
 ```rust
@@ -119,7 +102,7 @@ See `examples/macros` for a runnable version.
 
 ```toml
 [dependencies]
-culpert = { version = "0.1.6", features = ["foundations"] }
+culpert = { version = "0.2.1", features = ["foundations"] }
 foundations = { version = "5", default-features = false, features = ["tracing", "telemetry-server"] }
 ```
 
@@ -155,7 +138,7 @@ attribution keys for free. See `examples/foundations` (minimal) and
 
 ```toml
 [dependencies]
-culpert            = { version = "0.1.6", features = ["tracing"] }
+culpert            = { version = "0.2.1", features = ["tracing"] }
 tracing            = "0.1"
 tracing-subscriber = "0.3"
 ```
