@@ -49,11 +49,6 @@ Three integration paths — pick whichever matches your service:
 | The [`tracing`](https://crates.io/crates/tracing) crate | `culpert-tracing` | Compose a `tracing_subscriber::Layer` into your subscriber stack. Existing `#[tracing::instrument]` annotations become attribution keys. |
 | Neither, or you want attribution independent of trace sampling | `culpert::scope` + `#[culpert::span_fn]` | One macro on the functions you want attributed. No external tracer. |
 
-**Status:** `0.1.0` on crates.io. Pre-1.0 — API may break in minor
-releases. See [`plan.md`](plan.md) for the design, [`notes.md`](notes.md)
-for the Phase 0 research verdicts, [`CHANGELOG.md`](CHANGELOG.md) for
-release notes, and [`ROADMAP.md`](ROADMAP.md) for what's next.
-
 ## Install
 
 Library:
@@ -86,7 +81,7 @@ The smallest viable setup. No external tracer:
 
 ```toml
 [dependencies]
-culpert = "0.1"
+culpert = "0.1.6"
 ```
 
 ```rust
@@ -121,8 +116,8 @@ See `examples/macros` for a runnable version.
 
 ```toml
 [dependencies]
-culpert              = "0.1"
-culpert-foundations  = "0.1"
+culpert              = "0.1.6"
+culpert-foundations  = "0.1.6"
 foundations = { version = "5", default-features = false, features = ["tracing", "telemetry-server"] }
 ```
 
@@ -363,102 +358,6 @@ attribution, Bernstein correction, threshold logic all run in this CLI.
 See [culpert-archive's README](https://github.com/rupert648/culpert-archive)
 for the deploy recipe and HTTP surface.
 
-## Comparison
-
-| | culpert | foundations `MemoryProfiler` | jemalloc heap prof | dhat | bytehound | heaptrack |
-|---|---|---|---|---|---|---|
-| Span attribution | ✓ | — | — | — | — | — |
-| Allocator | any `GlobalAlloc` | jemalloc only | jemalloc only | dhat-rs alloc | linker-injected | LD_PRELOAD |
-| Platform | any | Linux only | Linux only | any | Linux | Linux |
-| Output | pprof | pprof | pprof | dhat-format | bytehound-format | heaptrack-format |
-| Sampling | yes (~512 KiB) | yes (jemalloc) | yes | full-fidelity | full-fidelity | full-fidelity |
-| Overhead (typical service) | ~0% off, ~0–5% on | low | low | extreme | high | high |
-| Pre-existing instrumentation needed | `#[span_fn]` | none | none | none | none | none |
-
-The comparison column that matters: **only culpert produces a profile that
-answers "which handler allocates most?" without manual stack→handler
-correlation**. That's the entire reason for it. If you don't need per-span
-attribution, foundations' `MemoryProfiler` is simpler and battle-tested;
-culpert and `MemoryProfiler` can also coexist (independent sample streams)
-if you want both.
-
-## Honest scope limits
-
-What culpert currently does **not** do:
-
-- **Low-overhead full-fidelity profiling.** Sampled is the only mode.
-  Workloads that allocate heavily and do nothing else see meaningful
-  per-alloc cost from the stack-capture path; realistic services
-  with CPU work between allocations see negligible overhead at the
-  default 1-in-512 KiB rate (samples are rare relative to surrounding
-  work). Opt in to `StackCaptureStrategy::FramePointer` to drop the
-  alloc-heavy overhead by ~91× — see the **Overhead** section.
-- **Async `#[culpert::span_fn]`.** v0.2 ships sync support; the macro
-  emits a compile error on `async fn` with a pointer at the alternative
-  (use the foundations or tracing adapters for async paths). A
-  `ScopedFuture` wrapper with explicit parent-capture-on-construction
-  semantics is queued for v0.2.x.
-- **Foundations attribution at very low trace sampling rates.** The
-  `culpert-foundations` adapter gates on `span_is_sampled()`. With
-  foundations' default 100 % sampling this never matters; with low-rate
-  sampling, allocs in unsampled traces land in the `(no span)` bucket.
-  Workarounds: bump foundations sampling, or use
-  `#[culpert::span_fn]` for the spans you care about (it doesn't gate
-  on any external tracer's sampling).
-- **CPU profiling, lock contention, fragmentation analysis.** Wrong
-  product; use [`pprof-rs`](https://crates.io/crates/pprof) /
-  [`samply`](https://github.com/mstange/samply) for CPU, jemalloc's
-  stats for fragmentation.
-## Overhead
-
-Measured with Criterion on Apple M-series, release builds. Four
-configurations: *baseline* (System global allocator), *tracking_off*
-(TrackingAllocator, no profiler installed), *tracking_on (BT)*
-(TrackingAllocator + installed profiler at default 1-in-512 KiB using
-the default `Backtrace` strategy), and *tracking_on (FP)* using
-`StackCaptureStrategy::FramePointer`.
-
-| Workload                     | baseline | tracking_off | tracking_on (BT) | tracking_on (FP) |
-|------------------------------|----------|--------------|------------------|------------------|
-| 200 × (alloc + ~1 µs CPU)    | 19.2 µs  | 17.8 µs      | 18.8 µs          | 17.9 µs          |
-| 200 × 64 B allocs (small)    | 3.44 µs  | 4.12 µs      | 3.76 µs          | 3.45 µs          |
-| 50 × 1 MiB allocs            | 5.06 µs  | 4.30 µs      | 584 µs           | 6.41 µs          |
-
-The first row is the realistic case (allocation interleaved with real
-work); the others are pure-alloc microbenches that emphasise the per-alloc
-overhead.
-
-`tracking_off` adds tens of ns per alloc which disappears under any
-meaningful CPU work between allocations.
-
-`tracking_on (BT)` is dominated by `backtrace::trace` per sampled alloc.
-On the realistic workload most iterations have no samples (only ~1 in
-~10 iterations crosses 512 KiB), so the cost is in the noise. On the
-`50 × 1 MiB` microbench every allocation samples, so each iteration pays
-100 backtrace walks — at ~5 µs each on macOS's libunwind that's 500 µs
-per iteration, which is what dominates.
-
-`tracking_on (FP)` opts in to `StackCaptureStrategy::FramePointer` —
-a tiny load-and-cmp loop over the frame-pointer chain — and brings the
-dense-sampling case from 584 µs to 6.4 µs (~91× faster). On the
-realistic workload the difference is within measurement noise because
-samples are rare relative to the surrounding CPU work.
-
-```rust
-culpert::install(ctx, Config {
-    stack_capture_strategy: StackCaptureStrategy::FramePointer,
-    ..Default::default()
-});
-```
-
-Frame-pointer capture is x86_64 / aarch64 only; other targets fall back
-to `Backtrace` transparently. Requires
-`RUSTFLAGS="-C force-frame-pointers=yes"` on Linux x86_64 release
-builds; macOS aarch64 has frame pointers on by default. On Linux
-x86_64 without compiled-in frame pointers, `backtrace::trace` uses
-DWARF unwinding (slow); FP is expected to be a major win across all
-workloads on that platform, though we haven't measured it here.
-
 ## Examples
 
 Four standalone examples in [`examples/`](examples) showing each
@@ -473,57 +372,6 @@ integration path:
 
 Each prints a profile to `/tmp/example-*.pb.gz`. View with
 `cargo run -p culpert-cli --bin culpert -- report <path>` or `pprof -tags <path>`.
-
-### Shutdown
-
-Call `culpert::shutdown()` before letting `main` return. It flips an
-internal "we're tearing down" flag so the observer ignores any
-allocations triggered by TLS destructors during process exit. Without
-it, certain combinations (notably the `tracing` crate's `Registry` on
-macOS, whose `thread_local`-based per-thread state allocates during
-teardown) can deadlock against a recursive `std::sync::Mutex` acquisition.
-
-`culpert::install` registers a `libc::atexit` handler that sets the
-same flag automatically — that catches typical Unix and Windows
-teardown paths, but **macOS `dyld4`'s TLS finalizers run before
-`atexit`**, so an explicit `culpert::shutdown()` is the safe way to
-make exit deterministic.
-
-## Architecture
-
-A core crate (`culpert`) does the work in three pieces:
-
-1. **`TrackingAllocator<A>`** — a `GlobalAlloc` wrapper that observes every
-   alloc. Samples on a per-thread byte countdown.
-2. **`SpanContext` trait** — pluggable source of "what's the active span on
-   this thread, right now?". culpert is span-source agnostic.
-3. **`Profile` snapshot** — drains every thread's per-thread sample buffer,
-   buckets by `(span, callsite)`, resolves symbols, returns a `Profile`.
-   `culpert::pprof::encode_gzipped` writes it as a pprof protobuf.
-
-Three production `SpanContext` adapters ship alongside:
-
-- **`culpert-foundations`** reads `foundations::telemetry::tracing::rustracing_span()`
-  and uses cf-rustracing's `span_id` (a stable `u64` per span) as
-  culpert's identity. Also provides `pprof_route()` — a
-  `TelemetryServerRoute` you register at init time.
-- **`culpert-tracing`** ships a `tracing_subscriber::Layer` that
-  captures span metadata at creation and resolves
-  `tracing::Span::current().id()` on the hot path. Compose into your
-  existing subscriber stack.
-- **`culpert::LocalSpanContext` + `#[culpert::span_fn]`** — sampling-independent
-  attribution via culpert's own thread-local scope stack. No external
-  tracer, no trace-sampling gating. Sync functions only in v0.2; async
-  via `ScopedFuture` is queued for a follow-up.
-
-`culpert-cli` is the report binary. It decodes pprof, groups by
-`span_name` label, walks call stacks (skipping capture-machinery frames so
-the leaf is real user code), and prints the tables shown above.
-
-`MockSpanContext` lets you drive the system in tests without any adapter.
-
-See [`plan.md`](plan.md) for the locked architectural decisions and
-[`ROADMAP.md`](ROADMAP.md) for what's queued next.
 
 ## License
 
