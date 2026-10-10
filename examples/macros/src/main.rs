@@ -42,7 +42,7 @@ fn main() {
     };
     eprintln!("stack capture strategy: {strategy:?} (toggle via CULPERT_FP=1)");
 
-    culpert::install(
+    let _handle = culpert::install(
         LocalSpanContext::new(),
         Config {
             rate_bytes: 4 * 1024,
@@ -80,10 +80,6 @@ fn main() {
     eprintln!("view with:");
     eprintln!("  cargo run -p culpert-cli --bin culpert -- report {path}");
     eprintln!("  pprof -tags {path}");
-
-    // See examples/tracing for the rationale — call shutdown to avoid
-    // a deadlock window in process teardown on macOS.
-    culpert::shutdown();
 }
 
 #[culpert::span_fn("handle_request")]

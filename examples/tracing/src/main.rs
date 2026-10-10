@@ -30,7 +30,7 @@ fn main() {
         .with(culpert::tracing::layer())
         .init();
 
-    culpert::tracing::install_with_config(Config {
+    let _handle = culpert::tracing::install_with_config(Config {
         rate_bytes: 4 * 1024,
         stack_depth: 32,
         buffer_capacity: 1 << 16,
@@ -57,13 +57,6 @@ fn main() {
     eprintln!("view with:");
     eprintln!("  cargo run -p culpert-cli --bin culpert -- report {path}");
     eprintln!("  pprof -tags {path}");
-
-    // On macOS, dyld4's TLS destructors run before atexit handlers, so
-    // culpert's automatic atexit-based shutdown gate doesn't fire in
-    // time and we'd deadlock against tracing-subscriber's internal
-    // thread_local management. Calling `culpert::shutdown` here makes
-    // it deterministic across platforms.
-    culpert::shutdown();
 }
 
 #[tracing::instrument]

@@ -38,7 +38,7 @@ async fn main() {
     })
     .expect("foundations init");
 
-    culpert::foundations::install_with_config(Config {
+    let _handle = culpert::foundations::install_with_config(Config {
         rate_bytes: 4 * 1024,
         stack_depth: 32,
         buffer_capacity: 1 << 16,
@@ -66,12 +66,6 @@ async fn main() {
     eprintln!("view with:");
     eprintln!("  cargo run -p culpert-cli --bin culpert -- report {path}");
     eprintln!("  pprof -tags {path}");
-
-    // Mark culpert as shutting down so the observer bails on any
-    // allocations triggered by TLS destructors during process exit.
-    // Avoids a deadlock that mostly affects macOS, where dyld4 runs
-    // TLS finalizers before atexit handlers.
-    culpert::shutdown();
 }
 
 #[span_fn("handle_request")]

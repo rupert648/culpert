@@ -26,7 +26,7 @@ const ITERS: usize = 200;
 
 #[tokio::main]
 async fn main() {
-    culpert::install(
+    let _handle = culpert::install(
         LocalSpanContext::new(),
         Config {
             rate_bytes: 4 * 1024,
@@ -90,8 +90,6 @@ async fn main() {
     eprintln!("view with:");
     eprintln!("  cargo run -p culpert-cli --bin culpert -- report {path}");
     eprintln!("  pprof -tags {path}");
-
-    culpert::shutdown();
 }
 
 /// Top-level request handler. Calls async sub-operations that yield

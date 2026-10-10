@@ -107,7 +107,7 @@ isn't measured in this repo.
 Default remains `Backtrace` for compatibility. Opt in:
 
 ```rust
-culpert::install(ctx, Config {
+let _profiler = culpert::install(ctx, Config {
     stack_capture_strategy: StackCaptureStrategy::FramePointer,
     ..Default::default()
 });

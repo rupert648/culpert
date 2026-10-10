@@ -51,9 +51,7 @@ fn end_to_end_attribution() {
         buffer_capacity: 65_536,
         ..Default::default()
     };
-    culpert::install(mock.clone(), config);
-
-    // ----- Phase A: single-thread, two spans + outside-span -------------
+    let _handle = culpert::install(mock.clone(), config);
 
     let s1 = span(1);
     {
@@ -117,8 +115,6 @@ fn end_to_end_attribution() {
         "expected at least some samples outside any span"
     );
 
-    // ----- Phase B: multi-thread, four worker spans ---------------------
-
     let mock2 = mock.clone();
     let thread_handles: Vec<_> = (10..14u64)
         .map(|i| {
@@ -165,8 +161,6 @@ fn end_to_end_attribution() {
         "span 2 should be drained by p1"
     );
 
-    // ----- Phase C: snapshot drains everything --------------------------
-
     let p3 = culpert::snapshot();
     for id in &thread_spans {
         assert_eq!(
@@ -175,8 +169,6 @@ fn end_to_end_attribution() {
             "thread span {id:?} should be drained by p2"
         );
     }
-
-    // ----- Phase D: span hierarchy --------------------------------------
 
     let outer = span(100);
     let inner = span(101);

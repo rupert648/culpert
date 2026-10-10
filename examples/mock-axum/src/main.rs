@@ -62,7 +62,7 @@ async fn main() {
     // Counter-mod sampling biases against small-but-frequent allocations
     // when a heavy allocator (here `/vec`) is in the same workload — at
     // 512 KiB the heavy allocator consumes most of the sample budget.
-    culpert::foundations::install_with_config(culpert::Config {
+    let _handle = culpert::foundations::install_with_config(culpert::Config {
         rate_bytes: 4 * 1024,
         stack_depth: 32,
         buffer_capacity: 1 << 16,
@@ -122,8 +122,6 @@ async fn main() {
         }
     }
 }
-
-// --- routes -------------------------------------------------------------
 
 #[span_fn("cheap")]
 async fn cheap() -> &'static str {

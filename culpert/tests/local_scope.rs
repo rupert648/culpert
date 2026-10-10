@@ -60,7 +60,7 @@ fn bytes_for_named(profile: &Profile, name: &str) -> u64 {
 
 #[test]
 fn end_to_end_attribution_through_local_scope() {
-    culpert::install(
+    let _handle = culpert::install(
         LocalSpanContext::new(),
         Config {
             rate_bytes: 4 * 1024,

@@ -41,7 +41,7 @@ fn end_to_end_attribution_through_foundations() {
     let test_ctx = TelemetryContext::test();
     let _ctx_scope = test_ctx.scope();
 
-    culpert_foundations::install_with_config(Config {
+    let _handle = culpert_foundations::install_with_config(Config {
         rate_bytes: 4 * 1024,
         stack_depth: 16,
         buffer_capacity: 65_536,

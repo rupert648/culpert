@@ -8,7 +8,7 @@
 //! `tracking_off` is the cost of *enabling* profiling.
 
 use criterion::{criterion_group, criterion_main};
-use culpert::{Config, MockSpanContext, TrackingAllocator};
+use culpert::{Config, MockSpanContext, ProfilerGuard, TrackingAllocator};
 use std::alloc::System;
 use std::num::NonZeroU64;
 use std::sync::OnceLock;
@@ -18,9 +18,9 @@ static GLOBAL: TrackingAllocator<System> = TrackingAllocator::new(System);
 
 static MOCK: OnceLock<MockSpanContext> = OnceLock::new();
 
-fn setup() {
+fn setup() -> ProfilerGuard {
     let mock = MOCK.get_or_init(MockSpanContext::new);
-    culpert::install(mock.clone(), Config::default());
+    let handle = culpert::install(mock.clone(), Config::default());
 
     // Enter a single span for the whole benchmark process. Every sampled
     // allocation gets attributed to it; this models the realistic case of
@@ -29,10 +29,11 @@ fn setup() {
     // Leak the guard — we want the span on the stack for the entire run.
     let guard = mock.enter(id, "bench_span", None);
     Box::leak(Box::new(guard));
+    handle
 }
 
 fn benches(c: &mut criterion::Criterion) {
-    setup();
+    let _handle = setup();
     common::workloads(c);
 }
 

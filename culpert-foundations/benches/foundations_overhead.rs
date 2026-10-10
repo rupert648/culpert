@@ -17,6 +17,7 @@
 //! FoundationsSpanContext cache lookup, or something else entirely.
 
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use culpert::ProfilerGuard;
 use culpert::{Config, StackCaptureStrategy, TrackingAllocator};
 use foundations::telemetry::tracing;
 use foundations::telemetry::TelemetryContext;
@@ -25,14 +26,14 @@ use foundations::telemetry::TelemetryContext;
 static GLOBAL: TrackingAllocator<tikv_jemallocator::Jemalloc> =
     TrackingAllocator::new(tikv_jemallocator::Jemalloc);
 
-static INIT: std::sync::Once = std::sync::Once::new();
+static GUARD: std::sync::OnceLock<ProfilerGuard> = std::sync::OnceLock::new();
 
 fn ensure_culpert_installed() {
-    INIT.call_once(|| {
+    GUARD.get_or_init(|| {
         culpert_foundations::install_with_config(Config {
             stack_capture_strategy: StackCaptureStrategy::FramePointer,
             ..Default::default()
-        });
+        })
     });
 }
 

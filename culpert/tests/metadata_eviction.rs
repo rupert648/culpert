@@ -21,7 +21,7 @@ const SCOPES_PER_TRIAL: usize = 200;
 #[test]
 fn metadata_cache_evicts_on_snapshot() {
     let ctx = LocalSpanContext::new();
-    culpert::install(
+    let _handle = culpert::install(
         LocalSpanContext::new(),
         Config {
             rate_bytes: 1024,

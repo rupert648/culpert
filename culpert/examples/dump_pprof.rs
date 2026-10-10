@@ -33,7 +33,7 @@ fn main() {
         .unwrap_or(1);
 
     let mock = MockSpanContext::new();
-    culpert::install(
+    let _handle = culpert::install(
         mock.clone(),
         Config {
             rate_bytes: 4 * 1024,

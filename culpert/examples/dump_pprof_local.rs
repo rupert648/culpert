@@ -45,7 +45,7 @@ fn main() {
         .nth(1)
         .unwrap_or_else(|| "/tmp/culpert-local.pb.gz".to_string());
 
-    culpert::install(
+    let _handle = culpert::install(
         LocalSpanContext::new(),
         Config {
             rate_bytes: 4 * 1024,

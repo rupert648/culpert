@@ -16,7 +16,7 @@
 //!
 //! fn main() {
 //!     foundations::telemetry::init(...).unwrap();
-//!     culpert::foundations::install(); // wires culpert::install internally
+//!     let _profiler = culpert::foundations::install();
 //!     // ...
 //! }
 //! ```
@@ -69,6 +69,7 @@ pub mod stack_capture;
 
 mod aggregator;
 mod allocator;
+mod debug;
 mod global;
 mod rng;
 mod sample;
@@ -80,40 +81,11 @@ pub mod foundations;
 #[cfg(feature = "tracing")]
 pub mod tracing;
 
-// Debug logging gated by CULPERT_DEBUG=1 in env. Read once at startup; the
-// hot-path check is one Relaxed atomic load.
-mod debug {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    static ENABLED: AtomicBool = AtomicBool::new(false);
-    static INIT: std::sync::Once = std::sync::Once::new();
-
-    pub(crate) fn enabled() -> bool {
-        INIT.call_once(|| {
-            if std::env::var_os("CULPERT_DEBUG").is_some() {
-                ENABLED.store(true, Ordering::Relaxed);
-            }
-        });
-        ENABLED.load(Ordering::Relaxed)
-    }
-
-    macro_rules! dbglog {
-        ($($arg:tt)*) => {
-            if $crate::debug::enabled() {
-                use std::io::Write as _;
-                let _ = writeln!(std::io::stderr(), "[culpert tid={:?}] {}",
-                    std::thread::current().id(), format_args!($($arg)*));
-            }
-        };
-    }
-
-    pub(crate) use dbglog;
-}
-
 pub use aggregator::{Frame, Profile, ProfileEntry};
 pub use allocator::TrackingAllocator;
 pub use config::{Config, StackCaptureStrategy};
 pub use culpert_macros::span_fn;
-pub use global::{install, shutdown, snapshot};
+pub use global::{install, snapshot, ProfilerGuard};
 pub use mock::{MockSpanContext, MockSpanGuard};
 pub use scope::{LocalSpanContext, Scope};
 pub use scoped_future::ScopedFuture;

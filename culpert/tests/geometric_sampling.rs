@@ -34,7 +34,7 @@ const TRUE_TOTAL: u64 = (ALLOC_BYTES as u64) * (ALLOC_COUNT as u64);
 #[test]
 fn bytes_total_is_unbiased_under_geometric_sampling() {
     let mock = MOCK.get_or_init(MockSpanContext::new);
-    culpert::install(
+    let _handle = culpert::install(
         mock.clone(),
         Config {
             rate_bytes: RATE_BYTES,

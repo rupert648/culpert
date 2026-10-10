@@ -22,7 +22,7 @@
 //!         ],
 //!     }).unwrap();
 //!
-//!     culpert::foundations::install();
+//!     let _profiler = culpert::foundations::install();
 //!     // ... rest of app, with #[span_fn] instrumentation as usual.
 //! }
 //! ```
@@ -44,16 +44,18 @@ mod route;
 pub use context::FoundationsSpanContext;
 pub use route::pprof_route;
 
-use crate::Config;
+use crate::{Config, ProfilerGuard};
 
 /// Install culpert with a [`FoundationsSpanContext`] and the default
 /// [`Config`]. Convenience wrapper for the common case.
 ///
 /// Should be called once after `foundations::telemetry::init`. Panics if
-/// called more than once (delegates to [`crate::install`]).
+/// called more than once (delegates to [`crate::install`]). Keep the returned
+/// [`ProfilerGuard`] alive while allocations should be recorded.
 #[track_caller]
-pub fn install() {
-    install_with_config(Config::default());
+#[must_use]
+pub fn install() -> ProfilerGuard {
+    install_with_config(Config::default())
 }
 
 /// As [`install`], but with a caller-supplied [`Config`] (e.g. a tighter
@@ -65,7 +67,8 @@ pub fn install() {
 /// any other panic. See `context::install_panic_hook_filter` for the
 /// details.
 #[track_caller]
-pub fn install_with_config(config: Config) {
+#[must_use]
+pub fn install_with_config(config: Config) -> ProfilerGuard {
     context::install_panic_hook_filter();
-    crate::install(FoundationsSpanContext::new(), config);
+    crate::install(FoundationsSpanContext::new(), config)
 }

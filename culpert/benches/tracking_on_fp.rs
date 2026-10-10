@@ -15,7 +15,7 @@
 //! faster (less work per sample) but the captures less useful.
 
 use criterion::{criterion_group, criterion_main};
-use culpert::{Config, MockSpanContext, StackCaptureStrategy, TrackingAllocator};
+use culpert::{Config, MockSpanContext, ProfilerGuard, StackCaptureStrategy, TrackingAllocator};
 use std::alloc::System;
 use std::num::NonZeroU64;
 use std::sync::OnceLock;
@@ -25,9 +25,9 @@ static GLOBAL: TrackingAllocator<System> = TrackingAllocator::new(System);
 
 static MOCK: OnceLock<MockSpanContext> = OnceLock::new();
 
-fn setup() {
+fn setup() -> ProfilerGuard {
     let mock = MOCK.get_or_init(MockSpanContext::new);
-    culpert::install(
+    let handle = culpert::install(
         mock.clone(),
         Config {
             stack_capture_strategy: StackCaptureStrategy::FramePointer,
@@ -38,10 +38,11 @@ fn setup() {
     let id = NonZeroU64::new(1).unwrap();
     let guard = mock.enter(id, "bench_span", None);
     Box::leak(Box::new(guard));
+    handle
 }
 
 fn benches(c: &mut criterion::Criterion) {
-    setup();
+    let _handle = setup();
     common::workloads(c);
 }
 

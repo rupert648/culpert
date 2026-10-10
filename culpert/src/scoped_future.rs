@@ -108,7 +108,7 @@ impl<F: Future> Future for ScopedFuture<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Config, LocalSpanContext, TrackingAllocator};
+    use crate::{Config, LocalSpanContext, ProfilerGuard, TrackingAllocator};
     use std::alloc::System;
     use std::sync::Mutex;
 
@@ -122,11 +122,12 @@ mod tests {
     static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     /// Install culpert with LocalSpanContext for tests. Because `install`
-    /// can only be called once per process, we use `std::sync::Once`.
+    /// can only be called once per process, a static `OnceLock` retains the
+    /// guard for the lifetime of the test process.
     fn ensure_installed() {
-        use std::sync::Once;
-        static INIT: Once = Once::new();
-        INIT.call_once(|| {
+        static GUARD: std::sync::OnceLock<ProfilerGuard> = std::sync::OnceLock::new();
+
+        GUARD.get_or_init(|| {
             crate::install(
                 LocalSpanContext::new(),
                 Config {
@@ -136,7 +137,7 @@ mod tests {
                     buffer_capacity: 1 << 16,
                     ..Default::default()
                 },
-            );
+            )
         });
     }
 

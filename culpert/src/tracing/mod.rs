@@ -21,7 +21,7 @@
 //!         .with(/* your fmt / OTLP / etc. layers */)
 //!         .init();
 //!
-//!     culpert::tracing::install();
+//!     let _profiler = culpert::tracing::install();
 //!
 //!     // ... your app, with #[tracing::instrument] / info_span!/... as usual.
 //! }
@@ -49,7 +49,7 @@ mod shared;
 pub use context::TracingSpanContext;
 pub use layer::CulpertLayer;
 
-use crate::Config;
+use crate::{Config, ProfilerGuard};
 use shared::shared;
 
 /// Build a [`tracing_subscriber::Layer`] that captures span metadata for
@@ -63,14 +63,17 @@ pub fn layer() -> CulpertLayer {
 /// `tracing_subscriber::registry().with(layer()).init()`.
 ///
 /// Panics if culpert has already been installed (delegates to
-/// [`crate::install`]).
+/// [`crate::install`]). Keep the returned [`ProfilerGuard`] alive while
+/// allocations should be recorded.
 #[track_caller]
-pub fn install() {
-    install_with_config(Config::default());
+#[must_use]
+pub fn install() -> ProfilerGuard {
+    install_with_config(Config::default())
 }
 
 /// As [`install`], but with a caller-supplied [`Config`].
 #[track_caller]
-pub fn install_with_config(config: Config) {
-    crate::install(TracingSpanContext::from_shared(shared().clone()), config);
+#[must_use]
+pub fn install_with_config(config: Config) -> ProfilerGuard {
+    crate::install(TracingSpanContext::from_shared(shared().clone()), config)
 }

@@ -34,7 +34,7 @@ pub(crate) fn is_shutting_down() -> bool {
     SHUTTING_DOWN.load(Ordering::Relaxed)
 }
 
-pub fn shutdown() {
+pub(crate) fn shutdown() {
     SHUTTING_DOWN.store(true, Ordering::Relaxed);
 }
 
@@ -49,18 +49,37 @@ unsafe extern "C" {
     fn atexit(cb: extern "C" fn()) -> i32;
 }
 
+/// Keeps allocation profiling active.
+///
+/// Dropping this guard stops the allocator observer before application and
+/// thread-local teardown can begin. Keep it alive for as long as allocations
+/// should be recorded.
+#[must_use = "keep this guard alive while profiling"]
+pub struct ProfilerGuard {
+    _private: (),
+}
+
+impl Drop for ProfilerGuard {
+    fn drop(&mut self) {
+        shutdown();
+    }
+}
+
 /// Install the profiler. Should be called once at service startup, after
 /// any global lifecycle (e.g. `foundations::telemetry::init`) the
 /// [`SpanContext`] depends on.
 ///
+/// Returns a [`ProfilerGuard`] that must remain alive while profiling. Dropping
+/// it permanently stops allocation observation for this process.
+///
 /// Registers a `libc::atexit` handler that flips an internal
 /// "shutting down" flag so the observer can bail during process
-/// teardown — see [`is_shutting_down`] for the recursive-mutex
-/// deadlock this avoids.
+/// teardown, avoiding recursive-mutex deadlocks in thread-local destructors.
 ///
 /// Panics if called more than once. This mirrors `foundations::telemetry::init`.
 #[track_caller]
-pub fn install<C: SpanContext>(ctx: C, config: Config) {
+#[must_use]
+pub fn install<C: SpanContext>(ctx: C, config: Config) -> ProfilerGuard {
     crate::debug::dbglog!(
         "install: rate_bytes={}, stack_depth={}, buffer_capacity={}",
         config.rate_bytes,
@@ -82,6 +101,8 @@ pub fn install<C: SpanContext>(ctx: C, config: Config) {
     unsafe {
         atexit(culpert_atexit);
     }
+
+    ProfilerGuard { _private: () }
 }
 
 /// Take a destructive snapshot of accumulated samples. Returns an empty

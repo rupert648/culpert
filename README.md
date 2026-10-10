@@ -92,7 +92,7 @@ use std::alloc::System;
 static GLOBAL: TrackingAllocator<System> = TrackingAllocator::new(System);
 
 fn main() {
-    culpert::install(LocalSpanContext::new(), Config::default());
+    let _profiler = culpert::install(LocalSpanContext::new(), Config::default());
 
     handle_request();
 
@@ -100,7 +100,6 @@ fn main() {
     let bytes = culpert::pprof::encode_gzipped(&profile).unwrap();
     std::fs::write("/tmp/prof.pb.gz", &bytes).unwrap();
 
-    culpert::shutdown();
 }
 
 #[culpert::span_fn("handle_request")]
@@ -109,6 +108,10 @@ fn handle_request() {
     // span_name = "handle_request".
 }
 ```
+
+Every installation method returns a `ProfilerGuard`. Keep that guard alive
+while allocations should be recorded; dropping it stops profiling safely
+before application and thread-local teardown.
 
 See `examples/macros` for a runnable version.
 
@@ -138,7 +141,7 @@ async fn main() {
         ],
     }).unwrap();
 
-    culpert::foundations::install();
+    let _profiler = culpert::foundations::install();
 
     // ... your existing app, with #[span_fn] annotations as usual.
 }
@@ -169,7 +172,7 @@ fn main() {
         .with(/* your other layers — fmt, OTLP, etc. */)
         .init();
 
-    culpert::tracing::install();
+    let _profiler = culpert::tracing::install();
 
     // ... your existing app, with #[tracing::instrument] annotations as usual.
 }
