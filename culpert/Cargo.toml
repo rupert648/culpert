@@ -15,6 +15,7 @@ culpert-macros = { workspace = true }
 fastrand = { workspace = true }
 flate2 = { workspace = true }
 foundations = { workspace = true, optional = true }
+libc = { workspace = true }
 parking_lot = { workspace = true }
 prost = { workspace = true }
 smallvec = { workspace = true }
