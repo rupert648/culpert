@@ -21,7 +21,8 @@
 //!   Requires the program to have been built with
 //!   `RUSTFLAGS="-C force-frame-pointers=yes"`; otherwise the walk
 //!   terminates at the first frame-pointer-less function. Implemented
-//!   for x86_64 and aarch64; other targets fall back to backtrace.
+//!   for x86_64 and aarch64 on Linux, Android, macOS, and iOS; other
+//!   targets fall back to backtrace.
 //!
 //! Frames are emitted as raw instruction pointers (no symbolisation).
 //! Symbol resolution is deferred to snapshot time in
@@ -75,11 +76,102 @@ fn capture_fp_or_fallback(depth: usize) -> Frames {
     }
 }
 
-/// Heuristic upper bound on a thread's stack size, used to gate frame
-/// pointer dereferences. Tunable later; 16 MiB is generously above
-/// every default thread stack size I'm aware of (Linux pthread default
-/// 8 MiB, macOS main thread 8 MiB, common tokio worker stacks 2 MiB).
-const STACK_RANGE_HINT_BYTES: usize = 16 * 1024 * 1024;
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct StackBounds {
+    lower: usize,
+    upper: usize,
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+impl StackBounds {
+    fn new(lower: usize, size: usize) -> Option<Self> {
+        let upper = lower.checked_add(size)?;
+        (lower < upper).then_some(Self { lower, upper })
+    }
+
+    fn contains(self, address: usize) -> bool {
+        address >= self.lower && address < self.upper
+    }
+
+    #[cfg(any(target_os = "android", target_os = "linux"))]
+    fn current() -> Option<Self> {
+        use core::{ffi::c_void, mem::MaybeUninit, ptr};
+
+        let mut attr = MaybeUninit::<libc::pthread_attr_t>::uninit();
+        // SAFETY: `attr` points to writable storage and `pthread_self` returns
+        // the calling thread, which is live for the duration of this call.
+        if unsafe { libc::pthread_getattr_np(libc::pthread_self(), attr.as_mut_ptr()) } != 0 {
+            return None;
+        }
+        // SAFETY: pthread_getattr_np succeeded, so `attr` is initialized.
+        let mut attr = unsafe { attr.assume_init() };
+        let mut address: *mut c_void = ptr::null_mut();
+        let mut size = 0;
+        // SAFETY: all output pointers are valid and `attr` remains initialized
+        // until pthread_attr_destroy below.
+        let result = unsafe { libc::pthread_attr_getstack(&attr, &mut address, &mut size) };
+        // SAFETY: pthread_getattr_np initialized `attr`; destroy it exactly once.
+        unsafe { libc::pthread_attr_destroy(&mut attr) };
+
+        (result == 0)
+            .then(|| Self::new(address as usize, size))
+            .flatten()
+    }
+
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    fn current() -> Option<Self> {
+        // SAFETY: these functions only inspect the calling live pthread.
+        let thread = unsafe { libc::pthread_self() };
+        // Apple's API returns the exclusive high address of the downward-
+        // growing stack rather than its base address.
+        let upper = unsafe { libc::pthread_get_stackaddr_np(thread) } as usize;
+        let size = unsafe { libc::pthread_get_stacksize_np(thread) };
+        let lower = upper.checked_sub(size)?;
+        Self::new(lower, size)
+    }
+}
+
+#[cfg(all(
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    any(
+        target_os = "android",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "macos"
+    )
+))]
+std::thread_local! {
+    /// Querying pthread attributes is substantially more expensive than the
+    /// frame walk, so cache the immutable mapping for the life of each thread.
+    static STACK_BOUNDS: Option<StackBounds> = StackBounds::current();
+}
+
+#[cfg(all(
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    any(
+        target_os = "android",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "macos"
+    )
+))]
+fn current_stack_bounds() -> Option<StackBounds> {
+    STACK_BOUNDS.try_with(|bounds| *bounds).ok().flatten()
+}
+
+#[cfg(all(
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    not(any(
+        target_os = "android",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "macos"
+    ))
+))]
+fn current_stack_bounds() -> Option<StackBounds> {
+    None
+}
 
 #[cfg(target_arch = "x86_64")]
 mod x86_64 {
@@ -117,9 +209,11 @@ mod x86_64 {
                 options(nomem, nostack, preserves_flags),
             );
         }
-        let stack_top_guess = sp.saturating_add(STACK_RANGE_HINT_BYTES);
+        let Some(bounds) = current_stack_bounds().filter(|bounds| bounds.contains(sp)) else {
+            return capture_backtrace(depth);
+        };
 
-        walk(&mut out, depth, fp, sp, stack_top_guess);
+        walk(&mut out, depth, fp, sp, bounds);
         out
     }
 }
@@ -154,9 +248,11 @@ mod aarch64 {
                 options(nomem, nostack, preserves_flags),
             );
         }
-        let stack_top_guess = sp.saturating_add(STACK_RANGE_HINT_BYTES);
+        let Some(bounds) = current_stack_bounds().filter(|bounds| bounds.contains(sp)) else {
+            return capture_backtrace(depth);
+        };
 
-        walk(&mut out, depth, fp, sp, stack_top_guess);
+        walk(&mut out, depth, fp, sp, bounds);
         out
     }
 }
@@ -165,13 +261,19 @@ mod aarch64 {
 /// architecture-specific; the actual chasing of the linked list is
 /// portable.
 ///
-/// `fp` must be the calling thread's current frame pointer. `sp_lower`
-/// and `top_guess` are the inclusive lower and exclusive upper bounds
-/// of where a legitimate frame pointer can live, in bytes. The walk
-/// terminates if `fp` falls outside that range, fails to strictly
+/// `fp` must be the calling thread's current frame pointer. `sp_lower` is
+/// its current stack pointer and `bounds` is the operating system-provided
+/// mapped stack range. The walk terminates unless the complete saved-FP and
+/// return-address pair falls inside that range, or if `fp` fails to strictly
 /// increase between iterations, or yields a zero return address.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-fn walk(out: &mut Frames, depth: usize, mut fp: *const usize, sp_lower: usize, top_guess: usize) {
+fn walk(
+    out: &mut Frames,
+    depth: usize,
+    mut fp: *const usize,
+    sp_lower: usize,
+    bounds: StackBounds,
+) {
     // Both the x86_64 and aarch64 ABIs require frame pointers (and the
     // saved-FP / return-address slots they point at) to be pointer-aligned.
     // A non-aligned value in the saved-FP slot is unambiguous "calling
@@ -182,11 +284,20 @@ fn walk(out: &mut Frames, depth: usize, mut fp: *const usize, sp_lower: usize, t
     // path (e.g. `TrackingAllocator::alloc -> observe -> walk`).
     const ALIGN: usize = core::mem::align_of::<usize>();
 
+    let frame_size = 2 * core::mem::size_of::<usize>();
     let mut prev_fp: usize = 0;
-    while !fp.is_null() && (fp as usize) >= sp_lower && (fp as usize) < top_guess {
+    while !fp.is_null() {
+        let address = fp as usize;
+        let Some(frame_end) = address.checked_add(frame_size) else {
+            break;
+        };
+        if address < sp_lower || address < bounds.lower || frame_end > bounds.upper {
+            break;
+        }
+
         // Alignment guard. Combined with the bounds check above, this is
         // what makes the SAFETY claim on the dereferences below valid.
-        if !(fp as usize).is_multiple_of(ALIGN) {
+        if !address.is_multiple_of(ALIGN) {
             break;
         }
 
@@ -194,18 +305,16 @@ fn walk(out: &mut Frames, depth: usize, mut fp: *const usize, sp_lower: usize, t
         // pointers must move toward higher addresses (stacks grow
         // down). If the chain ever turns around, the data is corrupt
         // and we stop rather than chase garbage.
-        if (fp as usize) <= prev_fp {
+        if address <= prev_fp {
             break;
         }
-        prev_fp = fp as usize;
+        prev_fp = address;
 
-        // SAFETY: we just verified `fp` is in the plausible-stack range
-        // AND pointer-aligned. The cell at `[fp + 8]` is, by calling
-        // convention, the return address saved at this frame's entry.
-        // The worst remaining failure mode (frame pointers omitted on
-        // some caller, garbage value in the saved slot) is "we record a
-        // bogus IP and bail next iteration when the bounds + alignment
-        // check catches the next fp" — not a segfault, not an abort.
+        // SAFETY: the complete two-word frame is inside the OS-provided
+        // mapped stack range and `fp` is pointer-aligned. The cell at
+        // `[fp + 8]` is, by calling convention, the return address saved
+        // at this frame's entry. If a caller omitted frame pointers, its
+        // garbage saved-FP value is validated before the next dereference.
         let return_addr = unsafe { *fp.add(1) };
         if return_addr == 0 {
             break;
@@ -215,10 +324,9 @@ fn walk(out: &mut Frames, depth: usize, mut fp: *const usize, sp_lower: usize, t
             break;
         }
 
-        // SAFETY: same justification — `[fp]` is the saved previous
-        // frame pointer. The very next iteration's bounds + alignment
-        // checks catch the case where this value is not actually a
-        // valid stack address.
+        // SAFETY: same mapped-range and alignment justification. `[fp]`
+        // is the saved previous frame pointer; the next iteration checks
+        // that value before dereferencing it.
         fp = unsafe { *fp as *const usize };
     }
 }
@@ -252,6 +360,8 @@ mod tests {
     ///   regardless of frame-pointer availability).
     /// - The frame-pointer strategy produces ≥ 0 frames — i.e. we
     ///   terminate cleanly even if the build has no frame pointers.
+    /// - CI's forced-frame-pointer build sets `CULPERT_EXPECT_FRAME_POINTERS`
+    ///   and requires the walk to traverse multiple frames.
     #[test]
     fn captures_terminate_cleanly_on_either_strategy() {
         let (bt, fp) = outer();
@@ -262,6 +372,12 @@ mod tests {
         // Frame-pointer strategy: just check we didn't panic or segfault
         // (we got here). Frame count depends on build flags.
         assert!(fp.len() <= 16);
+        if std::env::var_os("CULPERT_EXPECT_FRAME_POINTERS").is_some() {
+            assert!(
+                fp.len() >= 2,
+                "forced-frame-pointer build should capture multiple frames"
+            );
+        }
     }
 
     /// Regression test for the alignment-guard bug: if the saved-FP slot
@@ -304,17 +420,68 @@ mod tests {
 
         let fp = &buf[0] as *const usize;
         let sp_lower = buf.as_ptr() as usize;
-        let top_guess = sp_lower + buf.len() * core::mem::size_of::<usize>() + 1;
+        // Extend the synthetic bound far enough that the forged next frame
+        // passes the complete-frame check. The alignment guard must be what
+        // stops it before any dereference.
+        let bounds = StackBounds::new(sp_lower, (buf.len() + 2) * core::mem::size_of::<usize>())
+            .expect("synthetic stack bounds");
 
         let mut frames = Frames::default();
         // The walk MUST NOT panic. If the alignment guard is missing,
         // the second iteration deref of the misaligned pointer will
         // abort the test process.
-        walk(&mut frames, 16, fp, sp_lower, top_guess);
+        walk(&mut frames, 16, fp, sp_lower, bounds);
 
         // We expect exactly one frame captured (the ra at buf[1]) before
         // the walker followed the misaligned next-fp and bailed.
         assert_eq!(frames.len(), 1, "frames captured before bailing");
         assert_eq!(frames.as_slice()[0], 0xDEAD_BEEF, "captured ra is buf[1]");
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn walk_requires_the_complete_frame_to_be_inside_stack_bounds() {
+        let buf = [0_usize, 0xDEAD_BEEF];
+        let fp = buf.as_ptr();
+        let lower = fp as usize;
+        let bounds =
+            StackBounds::new(lower, core::mem::size_of::<usize>()).expect("synthetic stack bounds");
+
+        let mut frames = Frames::default();
+        walk(&mut frames, 16, fp, lower, bounds);
+
+        assert!(frames.is_empty());
+    }
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    #[test]
+    fn walk_rejects_an_aligned_pointer_outside_the_mapped_stack() {
+        let buf = [0_usize; 2];
+        let lower = buf.as_ptr() as usize;
+        let bounds =
+            StackBounds::new(lower, core::mem::size_of_val(&buf)).expect("synthetic stack bounds");
+        let outside = bounds.upper + core::mem::align_of::<usize>();
+        debug_assert!(outside.is_multiple_of(core::mem::align_of::<usize>()));
+
+        let mut frames = Frames::default();
+        walk(&mut frames, 16, outside as *const usize, lower, bounds);
+
+        assert!(frames.is_empty());
+    }
+
+    #[cfg(all(
+        any(target_arch = "x86_64", target_arch = "aarch64"),
+        any(
+            target_os = "android",
+            target_os = "ios",
+            target_os = "linux",
+            target_os = "macos"
+        )
+    ))]
+    #[test]
+    fn current_stack_bounds_contain_a_local_variable() {
+        let local = 0_u8;
+        let bounds = current_stack_bounds().expect("current platform exposes pthread stack bounds");
+        assert!(bounds.contains(&local as *const u8 as usize));
     }
 }

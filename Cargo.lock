@@ -509,6 +509,7 @@ dependencies = [
  "fastrand",
  "flate2",
  "foundations",
+ "libc",
  "parking_lot",
  "prost",
  "smallvec",

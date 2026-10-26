@@ -65,6 +65,11 @@ jobs:
       run: cargo clippy --workspace --all-targets -- -D warnings
     - name: Run tests
       run: cargo test --workspace --verbose
+    - name: Run frame-pointer stack capture tests
+      env:
+        CULPERT_EXPECT_FRAME_POINTERS: "1"
+        RUSTFLAGS: -C force-frame-pointers=yes
+      run: cargo test -p culpert stack_capture --verbose
 
   # Capture an allocation profile from example-macros and diff it
   # against the latest baseline on main. Demonstrates how external

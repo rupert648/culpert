@@ -31,6 +31,7 @@ culpert-macros = { path = "culpert-macros", version = "0.2.1" }
 
 backtrace = "0.3"
 fastrand = "2.4.1"
+libc = "0.2"
 parking_lot = "0.12"
 smallvec = "1"
 flate2 = "1"

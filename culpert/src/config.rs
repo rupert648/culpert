@@ -29,11 +29,10 @@ pub enum StackCaptureStrategy {
     /// otherwise the walk terminates at the first frame-pointer-less
     /// function and you get a shallow stack.
     ///
-    /// Implemented for `target_arch = "x86_64"` and `target_arch =
-    /// "aarch64"`. On other architectures this variant silently falls
-    /// back to [`Backtrace`](Self::Backtrace) — the user asked for the
-    /// fast path, we give them the best available one without breaking
-    /// the build.
+    /// Implemented on Linux, Android, macOS, and iOS for `target_arch =
+    /// "x86_64"` and `target_arch = "aarch64"`. Other targets silently
+    /// fall back to [`Backtrace`](Self::Backtrace) when Culpert cannot get
+    /// authoritative bounds for the calling thread's stack.
     FramePointer,
 }
 
